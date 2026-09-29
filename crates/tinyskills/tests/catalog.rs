@@ -318,8 +318,8 @@ fn parse_hermes_entry_points_skills_sh_at_the_listed_github_repo() {
     );
 }
 
-/// Same-named entries as the live catalog has them: several ClawHub skills
-/// share a display name, and a ClawHub slug equals a bundled skill's name.
+/// Same-named entries as the live catalog has them: several `ClawHub` skills
+/// share a display name, and a `ClawHub` slug equals a bundled skill's name.
 fn same_named_catalog() -> Vec<CatalogEntry> {
     [
         json!({ "name": "AI Code Review", "source": "ClawHub", "identifier": "qf-code-review" }),
