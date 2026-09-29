@@ -7,6 +7,19 @@ use crate::model::{
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+/// Read a skill document or sidecar file as bounded UTF-8 text.
+///
+/// The file must be a regular, non-symlink file no larger than
+/// [`MAX_DOCUMENT_BYTES`](crate::MAX_DOCUMENT_BYTES).
+///
+/// # Errors
+///
+/// Returns an error when the path cannot be read, is a symlink or not a
+/// regular file, exceeds the size bound, or is not valid UTF-8.
+pub fn read_document(path: &Path) -> std::io::Result<String> {
+    read_bounded_text(path, crate::model::MAX_DOCUMENT_BYTES)
+}
+
 /// Parse a skill document from disk.
 #[must_use]
 pub fn parse_skill(path: &Path) -> Option<(SkillFrontmatter, String, Vec<String>)> {
