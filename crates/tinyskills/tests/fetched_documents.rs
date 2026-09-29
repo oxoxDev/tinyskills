@@ -169,3 +169,66 @@ fn refuses_a_symlinked_target_directory() -> Result<(), Box<dyn std::error::Erro
     assert!(fs::read_dir(outside.path())?.next().is_none());
     Ok(())
 }
+
+#[test]
+fn concurrent_installs_use_separate_temporary_files() -> Result<(), Box<dyn std::error::Error>> {
+    use std::thread;
+    use std::sync::Arc;
+
+    let temp = Arc::new(tempfile::tempdir()?);
+    let root = temp.path().to_path_buf();
+
+    // Simulate two concurrent installs to the same slug.
+    // Each thread attempts to write a different content.
+    let mut handles = vec![];
+
+    for (i, content) in [
+        "---\nname: concurrent\ndescription: first\n---\n\nFirst body\n",
+        "---\nname: concurrent\ndescription: second\n---\n\nSecond body\n",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let root = root.clone();
+        let content = content.to_string();
+        let handle = thread::spawn(move || {
+            // Small delay to increase chance of concurrent execution
+            if i == 0 {
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+            write_installed_document(&root, "concurrent", &content)
+        });
+        handles.push(handle);
+    }
+
+    // One install should succeed (fresh), one should report already installed
+    let results: Vec<_> = handles
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .collect();
+
+    // At least one should succeed
+    assert!(results.iter().any(|r| r.is_ok()));
+
+    // The installed file should contain valid content, either first or second
+    let path = root.join("concurrent").join("SKILL.md");
+    let content = fs::read_to_string(&path)?;
+    assert!(
+        content.contains("First body") || content.contains("Second body"),
+        "installed content should be from one of the concurrent writers"
+    );
+
+    // There should be no leftover temporary files
+    let dir_contents: Vec<_> = fs::read_dir(root.join("concurrent"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().into_string().unwrap_or_default())
+        .collect();
+    for name in dir_contents {
+        assert!(
+            !name.contains("tmp"),
+            "temporary file '{name}' should have been cleaned up"
+        );
+    }
+
+    Ok(())
+}
