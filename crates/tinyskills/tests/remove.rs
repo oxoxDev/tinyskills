@@ -151,3 +151,28 @@ fn rejects_symlinked_root() -> Result<(), Box<dyn std::error::Error>> {
     assert!(real_root.path().join("real/SKILL.md").exists());
     Ok(())
 }
+
+#[test]
+fn refuses_a_plain_file_named_like_the_bundle() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    write(&temp.path().join("notes"), "not a bundle")?;
+    let error = error_of(&[temp.path().to_path_buf()], "notes")?;
+    assert!(matches!(error, RemoveError::NotADirectory(_)), "{error}");
+    assert!(error.to_string().contains("is not a directory"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn io_errors_name_the_action_and_path() {
+    let error = RemoveError::Io {
+        action: "remove",
+        path: "/tmp/x".to_owned(),
+        source: std::io::Error::other("boom"),
+    };
+    assert_eq!(error.to_string(), "remove /tmp/x failed: boom");
+    assert!(std::error::Error::source(&error).is_some());
+    assert_eq!(
+        RemoveError::Escapes("/elsewhere".to_owned()).to_string(),
+        "refused to remove /elsewhere — path escapes skills root"
+    );
+}
