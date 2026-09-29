@@ -38,7 +38,9 @@ pub enum ResourceError {
         /// Maximum permitted size.
         limit: u64,
     },
-    /// Canonicalization escaped the skill bundle.
+    /// Canonicalization escaped the skill bundle. No longer produced by
+    /// [`read_resource`], which rejects every symlinked component instead; kept
+    /// so existing matches keep compiling.
     #[error("resource path escapes skill root: {path}")]
     Escapes {
         /// Canonical path outside the skill root.
