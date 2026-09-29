@@ -407,8 +407,8 @@ pub fn scaffold_bundle(
     let document = dir.join(options.document.file_name());
     let other = dir.join(options.document.other());
     let content = if options.overwrite {
-        let body = parse_skill(&document)
-            .or_else(|| parse_skill(&other))
+        let source = if document.exists() { &document } else { &other };
+        let body = parse_skill(source)
             .map(|(_, body, _)| body)
             .ok_or_else(|| AuthoringError::UnparseableBody {
                 slug: spec.slug.clone(),
