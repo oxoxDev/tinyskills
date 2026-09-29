@@ -191,8 +191,9 @@ fn open_resource(root: &Path, relative_path: &Path) -> std::io::Result<std::fs::
     }
     // No `openat(NOFOLLOW)` here: re-walk every component immediately before
     // opening so an intermediate symlink is rejected.
-    reject_symlink_components(root, relative_path)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string()))?;
+    reject_symlink_components(root, relative_path).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
+    })?;
     std::fs::File::open(root.join(relative_path))
 }
 

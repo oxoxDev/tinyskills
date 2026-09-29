@@ -118,8 +118,8 @@ pub fn remove_bundle(roots: &[PathBuf], slug: &str) -> Result<PathBuf, RemoveErr
         return Err(RemoveError::Escapes(canonical.display().to_string()));
     }
 
-    let metadata =
-        std::fs::symlink_metadata(&canonical).map_err(|error| io_error("stat", &canonical, error))?;
+    let metadata = std::fs::symlink_metadata(&canonical)
+        .map_err(|error| io_error("stat", &canonical, error))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(RemoveError::NotADirectory(canonical.display().to_string()));
     }

@@ -18,9 +18,9 @@ mod resource;
 mod trigger;
 
 pub use authoring::{
-    AuthoringError, BundleDocument, BundleSpec, ScaffoldOptions, ScaffoldOutcome, render_workflow_frontmatter,
-    render_workflow_md, scaffold_bundle, slugify, validate_description, validate_display_name,
-    yaml_scalar,
+    AuthoringError, BundleDocument, BundleSpec, ScaffoldOptions, ScaffoldOutcome,
+    render_workflow_frontmatter, render_workflow_md, scaffold_bundle, slugify,
+    validate_description, validate_display_name, yaml_scalar,
 };
 pub use bundle::{BundledFile, BundledSkill, InstallReport, install, is_current_materialization};
 pub use catalog::{

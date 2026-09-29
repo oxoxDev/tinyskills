@@ -3,8 +3,8 @@
 use crate::document::parse_skill_str;
 use crate::model::{MAX_NAME_LEN, SKILL_MD, SkillFrontmatter};
 use std::net::SocketAddr;
-use std::path::{Component, Path, PathBuf};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 /// Maximum accepted raw install URL length.
@@ -451,7 +451,10 @@ pub fn validate_fetched_document(bytes: &[u8]) -> Result<FetchedDocument, Docume
 pub fn redact_url(raw: &str) -> String {
     match url::Url::parse(raw) {
         Ok(parsed) => {
-            let port = parsed.port().map(|port| format!(":{port}")).unwrap_or_default();
+            let port = parsed
+                .port()
+                .map(|port| format!(":{port}"))
+                .unwrap_or_default();
             format!(
                 "{}://{}{port}{}",
                 parsed.scheme(),
@@ -547,7 +550,9 @@ pub fn write_installed_document(
             return if target_file.is_file() {
                 Ok(DocumentWrite::AlreadyInstalled(target_file))
             } else {
-                Err(WriteError::MissingDocument(target_dir.display().to_string()))
+                Err(WriteError::MissingDocument(
+                    target_dir.display().to_string(),
+                ))
             };
         }
         Err(_) => {}
