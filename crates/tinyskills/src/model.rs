@@ -5,17 +5,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Current workflow document filename.
-pub(crate) const WORKFLOW_MD: &str = "WORKFLOW.md";
+pub const WORKFLOW_MD: &str = "WORKFLOW.md";
 /// Standard agentskills.io document filename.
-pub(crate) const SKILL_MD: &str = "SKILL.md";
+pub const SKILL_MD: &str = "SKILL.md";
 /// Legacy JSON manifest filename.
-pub(crate) const SKILL_JSON: &str = "skill.json";
+pub const SKILL_JSON: &str = "skill.json";
 /// Recommended upper bound for a skill name.
-pub(crate) const MAX_NAME_LEN: usize = 64;
+pub const MAX_NAME_LEN: usize = 64;
 /// Recommended upper bound for a skill description.
-pub(crate) const MAX_DESCRIPTION_LEN: usize = 1024;
+pub const MAX_DESCRIPTION_LEN: usize = 1024;
 /// Conventional resource directories discovered inside a skill bundle.
-pub(crate) const RESOURCE_DIRS: &[&str] = &[
+pub const RESOURCE_DIRS: &[&str] = &[
     "scripts",
     "references",
     "assets",
@@ -24,9 +24,9 @@ pub(crate) const RESOURCE_DIRS: &[&str] = &[
     "prompts",
 ];
 /// Maximum text resource size accepted by [`crate::read_resource`].
-pub(crate) const MAX_RESOURCE_BYTES: u64 = 128 * 1024;
+pub const MAX_RESOURCE_BYTES: u64 = 128 * 1024;
 /// Maximum Markdown document size accepted by the parser.
-pub(crate) const MAX_DOCUMENT_BYTES: u64 = 1024 * 1024;
+pub const MAX_DOCUMENT_BYTES: u64 = 1024 * 1024;
 /// Maximum legacy JSON manifest size accepted by the parser.
 pub(crate) const MAX_LEGACY_MANIFEST_BYTES: u64 = 256 * 1024;
 
@@ -178,6 +178,18 @@ pub struct Skill {
 }
 
 impl Skill {
+    /// Stable identifier used to address this skill: the on-disk directory
+    /// name, falling back to the display name for values that predate
+    /// `dir_name`.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        if self.dir_name.is_empty() {
+            &self.name
+        } else {
+            &self.dir_name
+        }
+    }
+
     /// Re-read the Markdown body for this skill.
     #[must_use]
     pub fn read_body(&self) -> Option<String> {

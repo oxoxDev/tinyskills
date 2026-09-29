@@ -43,6 +43,40 @@ impl DiscoveryRoot {
     }
 }
 
+/// How equal-precedence collisions are decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TieBreak {
+    /// The lexicographically smaller location wins, independent of input order.
+    #[default]
+    StableLocation,
+    /// The skill seen last wins. With [`discover_with`], later
+    /// [`DiscoveryRoot`]s therefore override earlier ones of the same scope.
+    LastWins,
+}
+
+/// Tunable behavior for [`resolve_collisions_with`] and [`discover_with`].
+///
+/// The default reproduces [`resolve_collisions`] and [`discover`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollisionPolicy {
+    /// Decides collisions between skills of equal scope precedence.
+    pub tie_break: TieBreak,
+    /// Scopes whose skills are dropped before resolution.
+    pub excluded_scopes: Vec<SkillScope>,
+    /// Noun used for the directory id in warnings (`skill` by default).
+    pub id_noun: String,
+}
+
+impl Default for CollisionPolicy {
+    fn default() -> Self {
+        Self {
+            tie_break: TieBreak::default(),
+            excluded_scopes: Vec::new(),
+            id_noun: "skill".to_owned(),
+        }
+    }
+}
+
 /// Discover skills under ordered roots and resolve collisions by scope.
 ///
 /// Roots may be provided in any order; [`SkillScope::precedence`] decides
@@ -50,17 +84,44 @@ impl DiscoveryRoot {
 /// by display name.
 #[must_use]
 pub fn discover(roots: impl IntoIterator<Item = DiscoveryRoot>) -> Vec<Skill> {
+    discover_with(roots, &CollisionPolicy::default())
+}
+
+/// [`discover`] under an explicit [`CollisionPolicy`].
+///
+/// Roots are scanned in the order given, so with [`TieBreak::LastWins`] root
+/// order is the tie-break between equal scopes.
+#[must_use]
+pub fn discover_with(
+    roots: impl IntoIterator<Item = DiscoveryRoot>,
+    policy: &CollisionPolicy,
+) -> Vec<Skill> {
     let skills = roots
         .into_iter()
         .flat_map(|root| scan_root(&root.path, root.scope));
-    resolve_collisions(skills)
+    resolve_collisions_with(skills, policy)
 }
 
 /// Resolve name and directory-id collisions in an arbitrary skill sequence.
 #[must_use]
 pub fn resolve_collisions(skills: impl IntoIterator<Item = Skill>) -> Vec<Skill> {
+    resolve_collisions_with(skills, &CollisionPolicy::default())
+}
+
+/// [`resolve_collisions`] under an explicit [`CollisionPolicy`].
+#[must_use]
+pub fn resolve_collisions_with(
+    skills: impl IntoIterator<Item = Skill>,
+    policy: &CollisionPolicy,
+) -> Vec<Skill> {
     let mut by_name = HashMap::new();
-    absorb(&mut by_name, skills);
+    absorb(
+        &mut by_name,
+        skills
+            .into_iter()
+            .filter(|skill| !policy.excluded_scopes.contains(&skill.scope)),
+        policy,
+    );
     let mut skills: Vec<_> = by_name.into_values().collect();
     skills.sort_by(|left, right| left.name.cmp(&right.name));
     skills
@@ -130,7 +191,11 @@ pub fn load_skill_dir(dir: &Path, scope: SkillScope) -> Option<Skill> {
     }
 }
 
-fn absorb(by_name: &mut HashMap<String, Skill>, incoming: impl IntoIterator<Item = Skill>) {
+fn absorb(
+    by_name: &mut HashMap<String, Skill>,
+    incoming: impl IntoIterator<Item = Skill>,
+    policy: &CollisionPolicy,
+) {
     for mut skill in incoming {
         let collision_keys: Vec<_> = by_name
             .iter()
@@ -149,15 +214,23 @@ fn absorb(by_name: &mut HashMap<String, Skill>, incoming: impl IntoIterator<Item
         if let Some(existing) = highest {
             let incoming_wins = skill.scope.precedence() > existing.scope.precedence()
                 || (skill.scope.precedence() == existing.scope.precedence()
-                    && location_key(&skill) < location_key(existing));
+                    && match policy.tie_break {
+                        TieBreak::StableLocation => location_key(&skill) < location_key(existing),
+                        TieBreak::LastWins => true,
+                    });
             if !incoming_wins {
                 if let Some(kept) = by_name.get_mut(&existing.name.clone()) {
+                    let suffix = match policy.tie_break {
+                        TieBreak::StableLocation => "ignored; stable collision winner",
+                        TieBreak::LastWins => "ignored",
+                    };
                     kept.warnings.push(format!(
-                        "skill id '{}' or name '{}' also declared in {:?} scope at {} (ignored; stable collision winner)",
+                        "{noun} id '{}' or name '{}' also declared in {:?} scope at {} ({suffix})",
                         skill.dir_name,
                         skill.name,
                         skill.scope,
-                        display_location(&skill)
+                        display_location(&skill),
+                        noun = policy.id_noun,
                     ));
                 }
                 continue;
@@ -166,11 +239,12 @@ fn absorb(by_name: &mut HashMap<String, Skill>, incoming: impl IntoIterator<Item
         for key in collision_keys {
             if let Some(shadowed) = by_name.remove(&key) {
                 skill.warnings.push(format!(
-                    "shadowed {:?}-scope skill '{}' (skill id '{}') at {}",
+                    "shadowed {:?}-scope skill '{}' ({noun} id '{}') at {}",
                     shadowed.scope,
                     shadowed.name,
                     shadowed.dir_name,
-                    display_location(&shadowed)
+                    display_location(&shadowed),
+                    noun = policy.id_noun,
                 ));
             }
         }

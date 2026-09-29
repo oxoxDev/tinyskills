@@ -1,8 +1,10 @@
 //! URL normalization and SSRF guards for single-document skill installs.
 
-use crate::model::{MAX_NAME_LEN, SkillFrontmatter};
+use crate::document::parse_skill_str;
+use crate::model::{MAX_NAME_LEN, SKILL_MD, SkillFrontmatter};
 use std::net::SocketAddr;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 /// Maximum accepted raw install URL length.
@@ -351,4 +353,245 @@ fn is_non_global_v6(ip: Ipv6Addr) -> bool {
         || (segments[0] & 0xfff0) == 0x3ff0
         || segments[0] == 0x5f00
         || ip.to_ipv4_mapped().is_some_and(is_non_global_v4)
+}
+
+/// Maximum accepted size of a fetched single-document install.
+pub const MAX_INSTALL_DOCUMENT_BYTES: usize = 1024 * 1024;
+
+/// Errors returned while validating a fetched skill document.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum DocumentError {
+    /// The body exceeds [`MAX_INSTALL_DOCUMENT_BYTES`].
+    #[error("fetch too large: {size} bytes exceeds {limit} limit")]
+    TooLarge {
+        /// Observed size in bytes.
+        size: u64,
+        /// Maximum accepted size in bytes.
+        limit: usize,
+    },
+    /// The body is not UTF-8.
+    #[error("invalid SKILL.md: body is not valid utf-8: {0}")]
+    InvalidUtf8(#[from] std::string::FromUtf8Error),
+    /// A frontmatter block was opened but never closed.
+    #[error("invalid SKILL.md: frontmatter block opened with `---` but never terminated")]
+    UnterminatedFrontmatter,
+    /// A required frontmatter field is missing or blank.
+    #[error("invalid SKILL.md: missing required field '{0}'")]
+    MissingField(&'static str),
+    /// No safe install slug could be derived.
+    #[error(transparent)]
+    Slug(#[from] InstallError),
+}
+
+/// A fetched document that passed [`validate_fetched_document`].
+#[derive(Debug, Clone)]
+pub struct FetchedDocument {
+    /// The full document text.
+    pub content: String,
+    /// Parsed frontmatter.
+    pub frontmatter: SkillFrontmatter,
+    /// Markdown body after the frontmatter.
+    pub body: String,
+    /// Directory slug derived by [`derive_install_slug`].
+    pub slug: String,
+    /// Non-fatal parse warnings.
+    pub warnings: Vec<String>,
+}
+
+/// Check an advertised or observed body length against
+/// [`MAX_INSTALL_DOCUMENT_BYTES`].
+///
+/// # Errors
+///
+/// Returns [`DocumentError::TooLarge`] when `len` exceeds the limit.
+pub fn check_document_size(len: u64) -> Result<(), DocumentError> {
+    if len > MAX_INSTALL_DOCUMENT_BYTES as u64 {
+        return Err(DocumentError::TooLarge {
+            size: len,
+            limit: MAX_INSTALL_DOCUMENT_BYTES,
+        });
+    }
+    Ok(())
+}
+
+/// Validate the bytes of a fetched `SKILL.md`.
+///
+/// Enforces the size cap and UTF-8, requires terminated frontmatter with a
+/// non-blank `name` and `description`, and derives the install slug.
+///
+/// # Errors
+///
+/// Returns a [`DocumentError`] describing the first failed check.
+pub fn validate_fetched_document(bytes: &[u8]) -> Result<FetchedDocument, DocumentError> {
+    check_document_size(bytes.len() as u64)?;
+    let content = String::from_utf8(bytes.to_vec())?;
+    let (frontmatter, body, warnings) =
+        parse_skill_str(&content).ok_or(DocumentError::UnterminatedFrontmatter)?;
+    if frontmatter.name.trim().is_empty() {
+        return Err(DocumentError::MissingField("name"));
+    }
+    if frontmatter.description.trim().is_empty() {
+        return Err(DocumentError::MissingField("description"));
+    }
+    let slug = derive_install_slug(&frontmatter)?;
+    Ok(FetchedDocument {
+        content,
+        frontmatter,
+        body,
+        slug,
+        warnings,
+    })
+}
+
+/// Strip userinfo, query, and fragment from a URL for observability.
+///
+/// Returns `<scheme>://<host>[:<port>]<path>`, or `<unparseable>` when the
+/// input is not a URL. It never returns the raw input.
+#[must_use]
+pub fn redact_url(raw: &str) -> String {
+    match url::Url::parse(raw) {
+        Ok(parsed) => {
+            let port = parsed
+                .port()
+                .map(|port| format!(":{port}"))
+                .unwrap_or_default();
+            format!(
+                "{}://{}{port}{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or(""),
+                parsed.path()
+            )
+        }
+        Err(_) => "<unparseable>".to_owned(),
+    }
+}
+
+/// Result of [`write_installed_document`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentWrite {
+    /// The document was written to this path.
+    Installed(PathBuf),
+    /// The slug was already installed; this existing document was left alone.
+    AlreadyInstalled(PathBuf),
+}
+
+/// Errors returned by [`write_installed_document`].
+#[derive(Debug, Error)]
+pub enum WriteError {
+    /// The slug is not a single safe directory name.
+    #[error("write failed: invalid slug {0:?}")]
+    InvalidSlug(String),
+    /// The target directory exists but is a symlink.
+    #[error("write failed: {0} is a symlink")]
+    Symlink(String),
+    /// The target directory exists but holds no `SKILL.md`.
+    #[error("skill install target already exists but has no {SKILL_MD}: {0}")]
+    MissingDocument(String),
+    /// The bundle directory could not be created.
+    #[error("write failed: create directory {path}: {source}")]
+    CreateDir {
+        /// Directory that could not be created.
+        path: String,
+        /// Underlying filesystem error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The temporary document could not be written.
+    #[error("write failed: {path}: {source}")]
+    Write {
+        /// File that could not be written.
+        path: String,
+        /// Underlying filesystem error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The temporary document could not be moved into place.
+    #[error("write failed: rename {path}: {source}")]
+    Rename {
+        /// Destination of the failed rename.
+        path: String,
+        /// Underlying filesystem error.
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+/// Atomically install `content` as `root/<slug>/SKILL.md`.
+///
+/// An existing `SKILL.md` for the slug is treated as an idempotent success and
+/// never overwritten. Otherwise the file is written to a temporary name and
+/// renamed into place with mode `0644` on Unix; on failure the temporary file
+/// and the new directory are removed so a retry is not blocked.
+///
+/// # Errors
+///
+/// Returns a [`WriteError`] for an unsafe slug, a symlinked or incomplete
+/// existing target, or a filesystem failure.
+pub fn write_installed_document(
+    root: &Path,
+    slug: &str,
+    content: &str,
+) -> Result<DocumentWrite, WriteError> {
+    let mut components = Path::new(slug).components();
+    if !matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(_)), None)
+    ) || slug.contains(['/', '\\'])
+    {
+        return Err(WriteError::InvalidSlug(slug.to_owned()));
+    }
+    let target_dir = root.join(slug);
+    let target_file = target_dir.join(SKILL_MD);
+    match std::fs::symlink_metadata(&target_dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(WriteError::Symlink(target_dir.display().to_string()));
+        }
+        Ok(_) => {
+            return if target_file.is_file() {
+                Ok(DocumentWrite::AlreadyInstalled(target_file))
+            } else {
+                Err(WriteError::MissingDocument(
+                    target_dir.display().to_string(),
+                ))
+            };
+        }
+        Err(_) => {}
+    }
+    if let Some(parent) = target_dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| WriteError::CreateDir {
+            path: parent.display().to_string(),
+            source,
+        })?;
+    }
+    std::fs::create_dir(&target_dir).map_err(|source| WriteError::CreateDir {
+        path: target_dir.display().to_string(),
+        source,
+    })?;
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let temp_file = target_dir.join(format!("SKILL.md.tmp.{nanos}"));
+    let written = std::fs::write(&temp_file, content).map_err(|source| WriteError::Write {
+        path: temp_file.display().to_string(),
+        source,
+    });
+    let result = written.and_then(|()| {
+        std::fs::rename(&temp_file, &target_file).map_err(|source| WriteError::Rename {
+            path: target_file.display().to_string(),
+            source,
+        })
+    });
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&temp_file);
+        return Err(error);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Best effort: the file is already installed if this fails.
+        let _ = std::fs::set_permissions(&target_file, std::fs::Permissions::from_mode(0o644));
+    }
+    Ok(DocumentWrite::Installed(target_file))
 }

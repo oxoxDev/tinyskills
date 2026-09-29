@@ -38,7 +38,9 @@ pub enum ResourceError {
         /// Maximum permitted size.
         limit: u64,
     },
-    /// Canonicalization escaped the skill bundle.
+    /// Canonicalization escaped the skill bundle. No longer produced by
+    /// [`read_resource`], which rejects every symlinked component instead; kept
+    /// so existing matches keep compiling.
     #[error("resource path escapes skill root: {path}")]
     Escapes {
         /// Canonical path outside the skill root.
@@ -110,12 +112,11 @@ pub fn read_resource(skill: &Skill, relative_path: &Path) -> Result<String, Reso
         .ok_or_else(|| ResourceError::NoLocation(skill.name.clone()))?;
     let canonical_root = std::fs::canonicalize(root)
         .map_err(|error| io_error("failed to canonicalize skill root", root, error))?;
+    reject_symlink_components(&canonical_root, relative_path)?;
     let requested = canonical_root.join(relative_path);
     let metadata = std::fs::symlink_metadata(&requested)
         .map_err(|error| io_error("failed to stat resource", &requested, error))?;
-    if metadata.file_type().is_symlink() {
-        return Err(ResourceError::Symlink);
-    }
+    // `reject_symlink_components` already refused a symlinked leaf.
     if !metadata.is_file() {
         return Err(ResourceError::NotRegular);
     }
@@ -125,17 +126,12 @@ pub fn read_resource(skill: &Skill, relative_path: &Path) -> Result<String, Reso
             limit: MAX_RESOURCE_BYTES,
         });
     }
-    let canonical_requested = std::fs::canonicalize(&requested)
-        .map_err(|error| io_error("failed to canonicalize resource", &requested, error))?;
-    if !canonical_requested.starts_with(&canonical_root) {
-        return Err(ResourceError::Escapes {
-            path: canonical_requested.display().to_string(),
-        });
-    }
+    // Every component is a normal, non-symlink entry under the canonical root,
+    // so the path cannot leave it; `open_resource` re-checks at open time.
     let file = open_resource(&canonical_root, relative_path)
-        .map_err(|error| io_error("failed to open resource", &canonical_requested, error))?;
+        .map_err(|error| io_error("failed to open resource", &requested, error))?;
     let bytes = read_bounded_file(file, MAX_RESOURCE_BYTES)
-        .map_err(|error| io_error("failed to read resource", &canonical_requested, error))?;
+        .map_err(|error| io_error("failed to read resource", &requested, error))?;
     std::str::from_utf8(&bytes)
         .map(str::to_owned)
         .map_err(ResourceError::InvalidUtf8)
@@ -182,7 +178,32 @@ fn open_resource(root: &Path, relative_path: &Path) -> std::io::Result<std::fs::
 
 #[cfg(not(unix))]
 fn open_resource(root: &Path, relative_path: &Path) -> std::io::Result<std::fs::File> {
+    if relative_path.as_os_str().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "resource path has no normal components",
+        ));
+    }
+    // No `openat(NOFOLLOW)` here: re-walk every component immediately before
+    // opening so an intermediate symlink is rejected.
+    reject_symlink_components(root, relative_path).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
+    })?;
     std::fs::File::open(root.join(relative_path))
+}
+
+/// Reject any component of `relative_path` under `root` that is a symlink.
+fn reject_symlink_components(root: &Path, relative_path: &Path) -> Result<(), ResourceError> {
+    let mut current = root.to_path_buf();
+    for component in relative_path.components() {
+        current.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&current)
+            .map_err(|error| io_error("failed to stat resource", &current, error))?;
+        if metadata.file_type().is_symlink() {
+            return Err(ResourceError::Symlink);
+        }
+    }
+    Ok(())
 }
 
 fn io_error(context: &'static str, path: &Path, source: std::io::Error) -> ResourceError {
