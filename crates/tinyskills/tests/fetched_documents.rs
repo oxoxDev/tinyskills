@@ -172,8 +172,8 @@ fn refuses_a_symlinked_target_directory() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 fn concurrent_installs_use_separate_temporary_files() -> Result<(), Box<dyn std::error::Error>> {
-    use std::thread;
     use std::sync::Arc;
+    use std::thread;
 
     let temp = Arc::new(tempfile::tempdir()?);
     let root = temp.path().to_path_buf();
@@ -202,10 +202,7 @@ fn concurrent_installs_use_separate_temporary_files() -> Result<(), Box<dyn std:
     }
 
     // One install should succeed (fresh), one should report already installed
-    let results: Vec<_> = handles
-        .into_iter()
-        .map(|h| h.join().unwrap())
-        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
     // At least one should succeed
     assert!(results.iter().any(|r| r.is_ok()));

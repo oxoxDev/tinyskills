@@ -223,7 +223,8 @@ fn edit_refuses_to_overwrite_an_unparseable_body() -> Result<(), Box<dyn std::er
 }
 
 #[test]
-fn edit_refuses_unparseable_target_even_when_fallback_is_valid() -> Result<(), Box<dyn std::error::Error>> {
+fn edit_refuses_unparseable_target_even_when_fallback_is_valid()
+-> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let dir = temp.path().join("broken");
     fs::create_dir_all(&dir)?;

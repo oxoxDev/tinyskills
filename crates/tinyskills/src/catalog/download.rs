@@ -101,7 +101,11 @@ pub fn download_url_from_source_url(source_url: &str) -> Option<String> {
     }
 
     let path = path.trim_end_matches('/');
-    if ![owner, repo, branch].into_iter().chain(path.split('/')).all(is_safe_segment) {
+    if ![owner, repo, branch]
+        .into_iter()
+        .chain(path.split('/'))
+        .all(is_safe_segment)
+    {
         return None;
     }
     let raw = format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}");

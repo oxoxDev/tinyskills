@@ -45,12 +45,9 @@ fn download_url_from_source_url_rejects_non_github_and_malformed() {
 #[test]
 fn download_url_from_source_url_validates_segments_and_rejects_traversal() {
     // Valid blob URL.
-    assert!(download_url_from_source_url("https://github.com/o/r/blob/main/x/SKILL.md")
-        .is_some());
+    assert!(download_url_from_source_url("https://github.com/o/r/blob/main/x/SKILL.md").is_some());
     // Valid tree URL.
-    assert!(
-        download_url_from_source_url("https://github.com/o/r/tree/main/x/y").is_some()
-    );
+    assert!(download_url_from_source_url("https://github.com/o/r/tree/main/x/y").is_some());
     // Query string in the URL should be rejected.
     assert_eq!(
         download_url_from_source_url("https://github.com/o/r/tree/main/x?tab=readme"),
@@ -63,9 +60,7 @@ fn download_url_from_source_url_validates_segments_and_rejects_traversal() {
     );
     // Path traversal segment (..) should be rejected.
     assert_eq!(
-        download_url_from_source_url(
-            "https://github.com/o/r/tree/main/../../other/repo/main/s"
-        ),
+        download_url_from_source_url("https://github.com/o/r/tree/main/../../other/repo/main/s"),
         None
     );
     // Dot (.) segment should be rejected.
