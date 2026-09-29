@@ -204,7 +204,11 @@ fn concurrent_installs_use_separate_temporary_files() -> Result<(), Box<dyn std:
     // One install should succeed (fresh), one should report already installed
     let results: Vec<_> = handles
         .into_iter()
-        .map(|h| h.join().ok().unwrap_or(Err(WriteError::InvalidSlug("join failed".into()))))
+        .map(|h| {
+            h.join()
+                .ok()
+                .unwrap_or(Err(WriteError::InvalidSlug("join failed".into())))
+        })
         .collect();
 
     // At least one should succeed
