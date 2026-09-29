@@ -86,6 +86,10 @@ pub fn download_url_from_source_url(source_url: &str) -> Option<String> {
         .strip_prefix("https://github.com/")
         .or_else(|| source_url.strip_prefix("http://github.com/"))?;
 
+    if rest.contains(['?', '#']) {
+        return None;
+    }
+
     // {owner}/{repo}/{blob|tree}/{branch}/{path...}
     let parts: Vec<&str> = rest.splitn(5, '/').collect();
     if parts.len() < 5 {
@@ -97,6 +101,9 @@ pub fn download_url_from_source_url(source_url: &str) -> Option<String> {
     }
 
     let path = path.trim_end_matches('/');
+    if ![owner, repo, branch].into_iter().chain(path.split('/')).all(is_safe_segment) {
+        return None;
+    }
     let raw = format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}");
     match kind {
         // blob points directly at a file; only append SKILL.md if it isn't one.
