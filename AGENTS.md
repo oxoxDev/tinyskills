@@ -23,14 +23,24 @@ crates/tinyskills/
 │   ├── document.rs     # Markdown/frontmatter parsing and inventory
 │   ├── discovery.rs    # deterministic scanning and collisions
 │   ├── catalog/        # network-free registry catalog parsing, URLs, lookup, search
-│   ├── install.rs      # installation URL and host validation
+│   ├── install.rs      # installation URL/host validation, fetched-document validation and atomic write
+│   ├── authoring.rs    # slugs, document rendering, bundle scaffolding
+│   ├── remove.rs       # defensive bundle removal
+│   ├── trigger.rs      # `triggers:` pattern parsing and matching
 │   ├── resource.rs     # safe lookup and resource reads
 │   └── bundle.rs       # compile-time bundle materialization
 └── tests/
     ├── catalog.rs
+    ├── authoring.rs
+    ├── collisions.rs
+    ├── documents.rs
     ├── edge_cases.rs
+    ├── fetched_documents.rs
     ├── install.rs
-    └── public_api.rs
+    ├── public_api.rs
+    ├── remove.rs
+    ├── resource_symlinks.rs
+    └── trigger.rs
 ```
 
 Public exports are centralized in `lib.rs`. Prefer focused modules named for
