@@ -479,3 +479,12 @@ fn catalog_entry_serde_shape_is_stable() {
         ]
     );
 }
+
+#[test]
+fn not_found_without_any_resemblance_points_at_search() {
+    let error = find_catalog_entry(&same_named_catalog(), "zzzz").expect_err("absent");
+    assert_eq!(
+        error.to_string(),
+        "no catalog entry has id 'zzzz'. Use an id returned by a catalog search."
+    );
+}
