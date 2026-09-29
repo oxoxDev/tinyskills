@@ -139,7 +139,7 @@ fn refuses_unsafe_slugs_and_incomplete_targets() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
-fn failed_writes_roll_back_the_new_directory() -> Result<(), Box<dyn std::error::Error>> {
+fn create_dir_failure_is_reported_as_typed_error() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     // A regular file where the root should be makes create_dir_all fail.
     let blocker = temp.path().join("blocker");
