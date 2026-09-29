@@ -43,6 +43,44 @@ fn download_url_from_source_url_rejects_non_github_and_malformed() {
 }
 
 #[test]
+fn download_url_from_source_url_validates_segments_and_rejects_traversal() {
+    // Valid blob URL.
+    assert!(download_url_from_source_url("https://github.com/o/r/blob/main/x/SKILL.md")
+        .is_some());
+    // Valid tree URL.
+    assert!(
+        download_url_from_source_url("https://github.com/o/r/tree/main/x/y").is_some()
+    );
+    // Query string in the URL should be rejected.
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/tree/main/x?tab=readme"),
+        None
+    );
+    // Fragment in the URL should be rejected.
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/tree/main/x#section"),
+        None
+    );
+    // Path traversal segment (..) should be rejected.
+    assert_eq!(
+        download_url_from_source_url(
+            "https://github.com/o/r/tree/main/../../other/repo/main/s"
+        ),
+        None
+    );
+    // Dot (.) segment should be rejected.
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/tree/main/./skill"),
+        None
+    );
+    // Space in segment should be rejected.
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/tree/main/skill name"),
+        None
+    );
+}
+
+#[test]
 fn skills_sh_ref_parses_listing_urls_only() {
     let skill = SkillsShRef::parse("https://skills.sh/getagentseal/founder-playbook/100m-leads")
         .expect("skills.sh listing");
