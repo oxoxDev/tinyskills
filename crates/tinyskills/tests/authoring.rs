@@ -1,12 +1,11 @@
 //! Slugs, rendering, and bundle scaffolding.
 
 use std::fs;
-use std::path::Path;
 
 use tinyskills::{
     AuthoringError, BundleDocument, BundleSpec, ScaffoldOptions, parse_skill_str,
-    render_workflow_frontmatter, render_workflow_md, scaffold_bundle, slugify, validate_description,
-    validate_display_name, yaml_scalar,
+    render_workflow_frontmatter, render_workflow_md, scaffold_bundle, slugify,
+    validate_description, validate_display_name, yaml_scalar,
 };
 
 fn spec(slug: &str) -> BundleSpec {
@@ -59,12 +58,14 @@ fn yaml_scalar_quotes_only_when_needed() {
     assert_eq!(yaml_scalar("a: b"), "\"a: b\"");
     assert_eq!(yaml_scalar("- item"), "\"- item\"");
     assert_eq!(yaml_scalar("trailing "), "\"trailing \"");
-    assert_eq!(yaml_scalar("line\nbreak \"q\" \\"), "\"line\\nbreak \\\"q\\\" \\\\\"");
+    assert_eq!(
+        yaml_scalar("line\nbreak \"q\" \\"),
+        "\"line\\nbreak \\\"q\\\" \\\\\""
+    );
 }
 
 #[test]
-fn rendered_frontmatter_round_trips_through_the_parser() -> Result<(), Box<dyn std::error::Error>>
-{
+fn rendered_frontmatter_round_trips_through_the_parser() -> Result<(), Box<dyn std::error::Error>> {
     let spec = BundleSpec {
         slug: "demo".to_owned(),
         description: "Fix: the # thing".to_owned(),
@@ -81,7 +82,10 @@ fn rendered_frontmatter_round_trips_through_the_parser() -> Result<(), Box<dyn s
     assert_eq!(frontmatter.license.as_deref(), Some("MIT"));
     assert_eq!(frontmatter.allowed_tools, ["Bash", "Read"]);
     assert_eq!(
-        frontmatter.metadata.get("author").and_then(serde_yaml::Value::as_str),
+        frontmatter
+            .metadata
+            .get("author")
+            .and_then(serde_yaml::Value::as_str),
         Some("Ada")
     );
 
@@ -136,7 +140,11 @@ fn scaffold_rejects_collisions_and_missing_edit_targets() -> Result<(), Box<dyn 
         .err()
         .ok_or("collision accepted")?;
     assert!(matches!(error, AuthoringError::AlreadyExists { .. }));
-    assert!(error.to_string().starts_with("skill 'demo' already exists at "));
+    assert!(
+        error
+            .to_string()
+            .starts_with("skill 'demo' already exists at ")
+    );
 
     let error = scaffold_bundle(temp.path(), &spec("ghost"), &edit())
         .err()
@@ -153,7 +161,10 @@ fn scaffold_rejects_unsafe_slugs_and_bad_descriptions() -> Result<(), Box<dyn st
         let error = scaffold_bundle(temp.path(), &spec(slug), &ScaffoldOptions::default())
             .err()
             .ok_or("unsafe slug accepted")?;
-        assert!(matches!(error, AuthoringError::InvalidSlug { .. }), "{slug}");
+        assert!(
+            matches!(error, AuthoringError::InvalidSlug { .. }),
+            "{slug}"
+        );
     }
     let blank = BundleSpec {
         description: "  ".to_owned(),
@@ -200,7 +211,10 @@ fn edit_refuses_to_overwrite_an_unparseable_body() -> Result<(), Box<dyn std::er
         .err()
         .ok_or("edit accepted")?;
     assert!(
-        error.to_string().to_lowercase().contains("could not be parsed"),
+        error
+            .to_string()
+            .to_lowercase()
+            .contains("could not be parsed"),
         "{error}"
     );
     assert!(fs::read_to_string(dir.join("SKILL.md"))?.contains("name: broken"));
@@ -241,6 +255,5 @@ fn scaffold_refuses_a_symlinked_bundle_dir() -> Result<(), Box<dyn std::error::E
         .ok_or("symlink accepted")?;
     assert!(matches!(error, AuthoringError::SymlinkedDir { .. }));
     assert!(fs::read_dir(outside.path())?.next().is_none());
-    let _ = Path::new("");
     Ok(())
 }

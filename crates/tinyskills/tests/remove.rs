@@ -53,7 +53,11 @@ fn missing_bundle_reports_not_installed() -> Result<(), Box<dyn std::error::Erro
     let temp = tempfile::tempdir()?;
     let error = error_of(&[temp.path().to_path_buf()], "ghost")?;
     assert!(error.to_string().contains("not installed"), "{error}");
-    assert!(error_of(&[], "ghost")?.to_string().contains("not installed"));
+    assert!(
+        error_of(&[], "ghost")?
+            .to_string()
+            .contains("not installed")
+    );
     Ok(())
 }
 
@@ -95,7 +99,11 @@ fn removes_workflow_and_skill_documents_from_the_first_holding_root()
 fn never_removes_the_root_itself() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     write(&temp.path().join("SKILL.md"), "---\nname: root\n---\n")?;
-    assert!(error_of(&[temp.path().to_path_buf()], ".")?.to_string().contains("separators"));
+    assert!(
+        error_of(&[temp.path().to_path_buf()], ".")?
+            .to_string()
+            .contains("separators")
+    );
     assert!(temp.path().join("SKILL.md").exists());
     Ok(())
 }
@@ -132,7 +140,10 @@ fn rejects_symlinked_alias_in_tree() -> Result<(), Box<dyn std::error::Error>> {
 fn rejects_symlinked_root() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let real_root = tempfile::tempdir()?;
-    write(&real_root.path().join("real/SKILL.md"), "---\nname: real\n---\n")?;
+    write(
+        &real_root.path().join("real/SKILL.md"),
+        "---\nname: real\n---\n",
+    )?;
     let link = temp.path().join("skills");
     std::os::unix::fs::symlink(real_root.path(), &link)?;
     let error = error_of(&[link], "real")?;
