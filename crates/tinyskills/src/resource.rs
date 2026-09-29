@@ -114,9 +114,7 @@ pub fn read_resource(skill: &Skill, relative_path: &Path) -> Result<String, Reso
     let requested = canonical_root.join(relative_path);
     let metadata = std::fs::symlink_metadata(&requested)
         .map_err(|error| io_error("failed to stat resource", &requested, error))?;
-    if metadata.file_type().is_symlink() {
-        return Err(ResourceError::Symlink);
-    }
+    // `reject_symlink_components` already refused a symlinked leaf.
     if !metadata.is_file() {
         return Err(ResourceError::NotRegular);
     }
