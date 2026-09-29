@@ -92,7 +92,7 @@ pub fn parse_hermes_entry(
 ///
 /// Hermes publishes a unique `identifier` per entry. Most are already
 /// source-qualified paths (`skills-sh/o/r/s`, `lobehub/x`, `owner/repo/path`),
-/// but ClawHub's is a bare slug that can equal another source's skill name, so
+/// but `ClawHub`'s is a bare slug that can equal another source's skill name, so
 /// a bare identifier is prefixed with its lowercased source. Bundled and
 /// optional Hermes skills carry no identifier; their names are unique among
 /// themselves and contain no `/`, so they cannot collide with a qualified id.

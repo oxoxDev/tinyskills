@@ -4,15 +4,15 @@
 //! the rest of this module is the per-source knowledge it draws on. Nothing
 //! here performs I/O: hosts probe the candidate URLs themselves.
 //!
-//! - **ClawHub** entries carry only a slug; ClawHub's file API serves the raw
+//! - **`ClawHub`** entries carry only a slug; `ClawHub`'s file API serves the raw
 //!   `SKILL.md` for it.
-//! - **skills.sh** entries point at `skills.sh/<owner>/<repo>/<skill>`, a
+//! - **`skills.sh`** entries point at `skills.sh/<owner>/<repo>/<skill>`, a
 //!   listing of a GitHub repo. Repos keep skills in different directories, so
 //!   a host locates the file at install time: the conventional directories
 //!   first ([`SkillsShRef::candidate_urls`]), then one recursive tree listing
 //!   of the repo ([`SkillsShRef::tree_api_url`], [`find_skill_md_in_tree`]).
 //!
-//! LobeHub entries are system-prompt agents with no `SKILL.md` at all and stay
+//! `LobeHub` entries are system-prompt agents with no `SKILL.md` at all and stay
 //! uninstallable.
 
 use serde_json::Value;
@@ -20,7 +20,7 @@ use serde_json::Value;
 const CLAWHUB_SKILLS_API: &str = "https://clawhub.ai/api/v1/skills";
 const GITHUB_RAW: &str = "https://raw.githubusercontent.com";
 const GITHUB_REPOS_API: &str = "https://api.github.com/repos";
-/// Directories a skills.sh repo conventionally keeps a skill under, probed in
+/// Directories a `skills.sh` repo conventionally keeps a skill under, probed in
 /// this order before listing the whole repo.
 const SKILLS_SH_BASE_DIRS: [&str; 4] = ["", "skills/", ".agents/skills/", ".claude/skills/"];
 
@@ -33,11 +33,11 @@ const SKILLS_SH_BASE_DIRS: [&str; 4] = ["", "skills/", ".agents/skills/", ".clau
 ///    `NousResearch/hermes-agent` repo under `skills/` / `optional-skills/`.
 /// 3. `source_url` on GitHub (browse.sh, NVIDIA, GitHub, ...): the blob/tree
 ///    view is rewritten to the `raw.githubusercontent.com` `SKILL.md`.
-/// 4. ClawHub `identifier`: ClawHub's file API by slug.
-/// 5. skills.sh `source_url`: the most common location in the listed GitHub
+/// 4. `ClawHub` `identifier`: `ClawHub`'s file API by slug.
+/// 5. `skills.sh` `source_url`: the most common location in the listed GitHub
 ///    repo. A host should locate the real one before fetching.
 ///
-/// Returns an empty string when no download exists (LobeHub agents have no
+/// Returns an empty string when no download exists (`LobeHub` agents have no
 /// `SKILL.md`).
 #[must_use]
 pub fn derive_download_url(
@@ -60,15 +60,15 @@ pub fn derive_download_url(
     if let Some(url) = source_url.and_then(download_url_from_source_url) {
         return url;
     }
-    if source.eq_ignore_ascii_case("clawhub") {
-        if let Some(url) = identifier.and_then(clawhub_download_url) {
-            return url;
-        }
+    if source.eq_ignore_ascii_case("clawhub")
+        && let Some(url) = identifier.and_then(clawhub_download_url)
+    {
+        return url;
     }
-    if let Some(skill) = source_url.and_then(SkillsShRef::parse) {
-        if let Some(url) = skill.candidate_urls().into_iter().next() {
-            return url;
-        }
+    if let Some(skill) = source_url.and_then(SkillsShRef::parse)
+        && let Some(url) = skill.candidate_urls().into_iter().next()
+    {
+        return url;
     }
     String::new()
 }
@@ -101,7 +101,10 @@ pub fn download_url_from_source_url(source_url: &str) -> Option<String> {
     match kind {
         // blob points directly at a file; only append SKILL.md if it isn't one.
         "blob" => {
-            if raw.ends_with("/SKILL.md") || raw.ends_with(".md") {
+            if std::path::Path::new(&raw)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            {
                 Some(raw)
             } else {
                 Some(format!("{raw}/SKILL.md"))
@@ -159,14 +162,14 @@ pub fn is_safe_segment(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// Raw `SKILL.md` URL for a ClawHub skill slug, or `None` when the slug is not
+/// Raw `SKILL.md` URL for a `ClawHub` skill slug, or `None` when the slug is not
 /// a plain path segment.
 #[must_use]
 pub fn clawhub_download_url(slug: &str) -> Option<String> {
     is_safe_segment(slug).then(|| format!("{CLAWHUB_SKILLS_API}/{slug}/file?path=SKILL.md"))
 }
 
-/// A skills.sh listing, `https://skills.sh/<owner>/<repo>/<skill>`.
+/// A `skills.sh` listing, `https://`skills.sh`/<owner>/<repo>/<skill>`.
 ///
 /// A host resolves the listing to a real `SKILL.md` by probing
 /// [`candidate_urls`](Self::candidate_urls) and, if none exists, fetching
@@ -183,7 +186,7 @@ pub struct SkillsShRef<'a> {
 }
 
 impl<'a> SkillsShRef<'a> {
-    /// Parse a skills.sh listing URL. Returns `None` for other hosts, for
+    /// Parse a `skills.sh` listing URL. Returns `None` for other hosts, for
     /// URLs without exactly three segments, and for unsafe segments.
     #[must_use]
     pub fn parse(source_url: &'a str) -> Option<Self> {

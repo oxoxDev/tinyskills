@@ -1,7 +1,7 @@
 //! Network-free logic for skill registry catalogs.
 //!
 //! A catalog is the aggregated Hermes skills index (Hermes built-in and
-//! optional skills, ClawHub, skills.sh, LobeHub, browse.sh, GitHub-hosted
+//! optional skills, `ClawHub`, `skills.sh`, `LobeHub`, browse.sh, GitHub-hosted
 //! collections). This module parses catalog JSON into [`CatalogEntry`] values,
 //! derives each entry's `SKILL.md` download URL, resolves an install request to
 //! one entry, and filters a catalog for search. Fetching, caching, probing

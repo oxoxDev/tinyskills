@@ -17,7 +17,7 @@ pub struct CatalogEntry {
     /// Short description.
     pub description: String,
     /// Upstream source within the aggregated catalog (e.g. "built-in",
-    /// "optional", "ClawHub", "skills.sh", "LobeHub", "browse.sh").
+    /// "optional", "`ClawHub`", "`skills.sh`", "`LobeHub`", "browse.sh").
     pub source: String,
     /// Category label from the upstream catalog.
     pub category: String,
@@ -30,12 +30,12 @@ pub struct CatalogEntry {
     /// Compatible platform hints.
     pub platforms: Vec<String>,
     /// Download URL for the `SKILL.md` file. Empty when the source publishes
-    /// no `SKILL.md` (LobeHub agents); an installer should point at
-    /// `source_url` instead of fetching a guaranteed 404. For skills.sh it is
+    /// no `SKILL.md` (`LobeHub` agents); an installer should point at
+    /// `source_url` instead of fetching a guaranteed 404. For `skills.sh` it is
     /// the most common location, resolved at install time.
     pub download_url: String,
-    /// Human-facing source page for the skill (GitHub blob/tree, LobeHub,
-    /// ClawHub, skills.sh, ...). Used to derive the raw download URL for
+    /// Human-facing source page for the skill (GitHub blob/tree, `LobeHub`,
+    /// `ClawHub`, `skills.sh`, ...). Used to derive the raw download URL for
     /// GitHub-hosted community skills and to give the user a link when no
     /// direct download exists.
     pub source_url: Option<String>,
