@@ -124,17 +124,12 @@ pub fn read_resource(skill: &Skill, relative_path: &Path) -> Result<String, Reso
             limit: MAX_RESOURCE_BYTES,
         });
     }
-    let canonical_requested = std::fs::canonicalize(&requested)
-        .map_err(|error| io_error("failed to canonicalize resource", &requested, error))?;
-    if !canonical_requested.starts_with(&canonical_root) {
-        return Err(ResourceError::Escapes {
-            path: canonical_requested.display().to_string(),
-        });
-    }
+    // Every component is a normal, non-symlink entry under the canonical root,
+    // so the path cannot leave it; `open_resource` re-checks at open time.
     let file = open_resource(&canonical_root, relative_path)
-        .map_err(|error| io_error("failed to open resource", &canonical_requested, error))?;
+        .map_err(|error| io_error("failed to open resource", &requested, error))?;
     let bytes = read_bounded_file(file, MAX_RESOURCE_BYTES)
-        .map_err(|error| io_error("failed to read resource", &canonical_requested, error))?;
+        .map_err(|error| io_error("failed to read resource", &requested, error))?;
     std::str::from_utf8(&bytes)
         .map(str::to_owned)
         .map_err(ResourceError::InvalidUtf8)
