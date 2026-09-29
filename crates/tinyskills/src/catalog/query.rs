@@ -1,7 +1,7 @@
 //! Lookup, suggestion and search over an in-memory catalog.
 
-use super::entry::CatalogEntry;
 use super::CatalogError;
+use super::entry::CatalogEntry;
 
 /// How many alternative ids a lookup error lists.
 const MAX_SUGGESTED_IDS: usize = 5;

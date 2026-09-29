@@ -7,6 +7,7 @@
 //! remains with the embedding host.
 
 mod bundle;
+mod catalog;
 mod discovery;
 mod document;
 mod install;
@@ -14,6 +15,12 @@ mod model;
 mod resource;
 
 pub use bundle::{BundledFile, BundledSkill, InstallReport, install, is_current_materialization};
+pub use catalog::{
+    CatalogEntry, CatalogError, SkillsShRef, TreeMiss, catalog_entry_id, clawhub_download_url,
+    closest_entry_ids, derive_download_url, download_url_from_docs_path,
+    download_url_from_source_url, filter_catalog, find_catalog_entry, find_skill_md_in_tree,
+    is_safe_segment, parse_catalog_json, parse_hermes_entry,
+};
 pub use discovery::{DiscoveryRoot, discover, load_skill_dir, resolve_collisions, scan_root};
 pub use document::{inventory_resources, parse_skill, parse_skill_str};
 pub use install::{

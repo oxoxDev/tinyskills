@@ -32,6 +32,7 @@ for skill in skills {
 - explicit scope precedence for builtin, legacy, user, project, and profile roots
 - traversal-, symlink-, size-, and UTF-8-safe resource reads
 - validated materialization and tamper detection for compile-time bundles
+- network-free registry catalog logic: Hermes catalog parsing, `SKILL.md` download-URL derivation (GitHub, ClawHub, skills.sh), entry lookup, and search filtering
 
 ## Development
 

@@ -22,10 +22,12 @@ crates/tinyskills/
 │   ├── model.rs        # metadata, scopes, constants
 │   ├── document.rs     # Markdown/frontmatter parsing and inventory
 │   ├── discovery.rs    # deterministic scanning and collisions
+│   ├── catalog/        # network-free registry catalog parsing, URLs, lookup, search
 │   ├── install.rs      # installation URL and host validation
 │   ├── resource.rs     # safe lookup and resource reads
 │   └── bundle.rs       # compile-time bundle materialization
 └── tests/
+    ├── catalog.rs
     ├── edge_cases.rs
     ├── install.rs
     └── public_api.rs

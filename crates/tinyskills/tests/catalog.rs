@@ -4,15 +4,14 @@
 
 use serde_json::json;
 use tinyskills::{
-    CatalogEntry, CatalogError, SkillsShRef, TreeMiss, clawhub_download_url,
-    derive_download_url, download_url_from_source_url, filter_catalog, find_catalog_entry,
-    find_skill_md_in_tree, parse_catalog_json,
+    CatalogEntry, CatalogError, SkillsShRef, TreeMiss, clawhub_download_url, derive_download_url,
+    download_url_from_source_url, filter_catalog, find_catalog_entry, find_skill_md_in_tree,
+    parse_catalog_json,
 };
 
 fn parse_hermes_entry(item: &serde_json::Value) -> Option<CatalogEntry> {
     tinyskills::parse_hermes_entry(item, None)
 }
-
 
 #[test]
 fn clawhub_download_url_uses_the_file_api_and_rejects_unsafe_slugs() {
@@ -102,8 +101,8 @@ fn find_skill_md_in_tree_matches_the_skill_directory_at_any_depth() {
 fn raw_url_percent_encodes_segments_from_a_tree_listing() {
     let skill = SkillsShRef::parse("https://skills.sh/o/r/my-skill").unwrap();
     assert_eq!(
-        skill.raw_url("docs #1/what?/my-skill/SKILL.md"),
-        "https://raw.githubusercontent.com/o/r/HEAD/docs%20%231/what%3F/my-skill/SKILL.md"
+        skill.raw_url("docs #1/what?/my-skill/SKILL.md").as_deref(),
+        Some("https://raw.githubusercontent.com/o/r/HEAD/docs%20%231/what%3F/my-skill/SKILL.md")
     );
 }
 
@@ -368,7 +367,9 @@ fn find_catalog_entry_matches_ids_and_unambiguous_legacy_names() {
 
 #[test]
 fn find_catalog_entry_refuses_an_ambiguous_name_and_lists_the_ids() {
-    let err = find_catalog_entry(&same_named_catalog(), "AI Code Review").unwrap_err();
+    let err = find_catalog_entry(&same_named_catalog(), "AI Code Review")
+        .unwrap_err()
+        .to_string();
     assert!(
         err.contains("2 catalog entries are named 'AI Code Review'"),
         "{err}"
@@ -381,7 +382,9 @@ fn find_catalog_entry_refuses_an_ambiguous_name_and_lists_the_ids() {
 
 #[test]
 fn find_catalog_entry_not_found_suggests_real_ids_instead_of_a_refresh() {
-    let err = find_catalog_entry(&same_named_catalog(), "ai-code-review").unwrap_err();
+    let error = find_catalog_entry(&same_named_catalog(), "ai-code-review").unwrap_err();
+    assert!(matches!(error, CatalogError::NotFound { .. }));
+    let err = error.to_string();
     assert!(
         err.starts_with("no catalog entry has id 'ai-code-review'"),
         "{err}"
@@ -390,11 +393,89 @@ fn find_catalog_entry_not_found_suggests_real_ids_instead_of_a_refresh() {
     assert!(!err.contains("refresh"), "{err}");
 }
 
-#[tokio::test]
-async fn install_from_catalog_errors_for_portal_skill_without_download() {
-    // A portal-only entry (empty download_url) must fail fast with an
-    // actionable message naming the source + page — never fetch a 404. (#3741)
-    let tmp = tempfile::tempdir().unwrap();
-    let entry = parse_hermes_entry(&json!({
-        "name": "code-audit",
-        "description": "x",
+#[test]
+fn parse_catalog_json_rejects_invalid_payloads() {
+    let error = parse_catalog_json("{").expect_err("invalid json");
+    assert!(error.to_string().contains("invalid catalog json"));
+    assert_eq!(parse_catalog_json("[{\"name\":\"a\"}]").unwrap().len(), 1);
+}
+
+#[test]
+fn derive_download_url_honours_a_non_blank_base_override() {
+    let url = derive_download_url("built-in", None, "x", None, None, Some(" http://m/ "));
+    assert_eq!(url, "http://m/x/SKILL.md");
+    assert_eq!(
+        derive_download_url("built-in", None, "x", None, None, Some("  ")),
+        ""
+    );
+}
+
+#[test]
+fn skills_sh_tree_lookup_builds_raw_url_and_messages() {
+    let skill = SkillsShRef::parse("https://skills.sh/o/r/my-skill").unwrap();
+    assert_eq!(
+        skill.tree_api_url(),
+        "https://api.github.com/repos/o/r/git/trees/HEAD?recursive=1"
+    );
+    let tree = json!({ "tree": [{ "path": "x/my-skill/SKILL.md", "type": "blob" }] });
+    assert_eq!(
+        skill.locate_in_tree(&tree).as_deref(),
+        Ok("https://raw.githubusercontent.com/o/r/HEAD/x/my-skill/SKILL.md")
+    );
+    let miss = skill.locate_in_tree(&json!({ "tree": [] })).unwrap_err();
+    assert_eq!(miss, TreeMiss::Absent);
+    assert!(
+        skill
+            .miss_message(&miss)
+            .contains("github.com/o/r has no my-skill/SKILL.md")
+    );
+}
+
+#[test]
+fn filter_catalog_filters_and_puts_undownloadable_entries_last() {
+    let items = [
+        json!({ "name": "alpha notes", "source": "LobeHub", "sourceUrl": "https://lobehub.com/agent/a" }),
+        json!({ "name": "beta notes", "source": "built-in", "category": "apple", "docsPath": "bundled/apple/apple-beta" }),
+        json!({ "name": "gamma", "source": "built-in", "category": "apple", "author": "Notes Inc", "docsPath": "bundled/apple/apple-gamma" }),
+    ];
+    let catalog: Vec<CatalogEntry> = items.iter().filter_map(parse_hermes_entry).collect();
+    let hits = filter_catalog(catalog.clone(), "NOTES", None, None);
+    let names: Vec<&str> = hits.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["beta notes", "gamma", "alpha notes"]);
+    let hits = filter_catalog(catalog.clone(), "", Some("BUILT-IN"), Some("Apple"));
+    assert_eq!(hits.len(), 2);
+    assert!(filter_catalog(catalog, "zzz", None, None).is_empty());
+}
+
+#[test]
+fn catalog_entry_serde_shape_is_stable() {
+    let entry = parse_hermes_entry(&json!({ "name": "n" })).unwrap();
+    let value = serde_json::to_value(&entry).unwrap();
+    let mut keys: Vec<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "author",
+            "category",
+            "commands",
+            "description",
+            "docs_path",
+            "download_url",
+            "env_vars",
+            "id",
+            "license",
+            "name",
+            "platforms",
+            "source",
+            "source_url",
+            "tags",
+            "version"
+        ]
+    );
+}

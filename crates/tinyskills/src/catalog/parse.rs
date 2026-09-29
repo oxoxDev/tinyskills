@@ -2,9 +2,9 @@
 
 use serde_json::Value;
 
+use super::CatalogError;
 use super::download::derive_download_url;
 use super::entry::CatalogEntry;
-use super::CatalogError;
 
 /// Parse the catalog body into its raw JSON items.
 ///
@@ -44,7 +44,10 @@ fn string_list(item: &Value, key: &str) -> Vec<String> {
 /// `download_base_override` is forwarded to
 /// [`derive_download_url`](super::derive_download_url).
 #[must_use]
-pub fn parse_hermes_entry(item: &Value, download_base_override: Option<&str>) -> Option<CatalogEntry> {
+pub fn parse_hermes_entry(
+    item: &Value,
+    download_base_override: Option<&str>,
+) -> Option<CatalogEntry> {
     let name = item.get("name").and_then(Value::as_str)?.to_string();
     let description = opt_string(item, "description").unwrap_or_default();
     let source = opt_string(item, "source").unwrap_or_else(|| "hermes".to_string());
