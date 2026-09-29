@@ -30,3 +30,20 @@ fn intermediate_symlink_components_are_rejected_with_the_symlink_error()
     );
     Ok(())
 }
+
+#[test]
+fn resolve_skill_skips_unrelated_skills() -> Result<(), String> {
+    use tinyskills::{Skill, resolve_skill};
+
+    let skill = |dir_name: &str, name: &str| Skill {
+        dir_name: dir_name.to_owned(),
+        name: name.to_owned(),
+        ..Skill::default()
+    };
+    let found = resolve_skill(
+        [skill("other", "Other"), skill("wanted", "Wanted")],
+        "wanted",
+    )?;
+    assert_eq!(found.dir_name, "wanted");
+    Ok(())
+}

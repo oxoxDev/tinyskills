@@ -176,3 +176,25 @@ fn io_errors_name_the_action_and_path() {
         "refused to remove /elsewhere — path escapes skills root"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn filesystem_failures_surface_as_io_errors() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir()?;
+    let bundle = temp.path().join("locked");
+    write(&bundle.join("SKILL.md"), "---\nname: locked\n---\n")?;
+    write(&bundle.join("nested/file.txt"), "x")?;
+    // A read-only subdirectory cannot have its entries unlinked.
+    fs::set_permissions(bundle.join("nested"), fs::Permissions::from_mode(0o555))?;
+    let result = remove_bundle(&[temp.path().to_path_buf()], "locked");
+    fs::set_permissions(bundle.join("nested"), fs::Permissions::from_mode(0o755))?;
+    match result {
+        Err(RemoveError::Io { action, .. }) => assert_eq!(action, "remove"),
+        // Privileged runners (root) bypass directory permissions.
+        Ok(_) => {}
+        Err(other) => return Err(format!("unexpected error: {other}").into()),
+    }
+    Ok(())
+}
