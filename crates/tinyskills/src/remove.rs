@@ -82,9 +82,16 @@ pub fn remove_bundle(roots: &[PathBuf], slug: &str) -> Result<PathBuf, RemoveErr
         });
     }
 
-    let root = roots
+    // The first root with any entry named `slug` (a dangling symlink counts, so
+    // it is reported as an alias rather than silently skipped).
+    let (root, candidate, metadata) = roots
         .iter()
-        .find(|root| std::fs::symlink_metadata(root.join(slug)).is_ok())
+        .find_map(|root| {
+            let candidate = root.join(slug);
+            std::fs::symlink_metadata(&candidate)
+                .ok()
+                .map(|metadata| (root, candidate, metadata))
+        })
         .ok_or_else(|| RemoveError::NotInstalled(slug.to_owned()))?;
 
     let root_meta =
@@ -92,36 +99,21 @@ pub fn remove_bundle(roots: &[PathBuf], slug: &str) -> Result<PathBuf, RemoveErr
     if root_meta.file_type().is_symlink() {
         return Err(RemoveError::SymlinkedRoot(root.display().to_string()));
     }
+    if metadata.file_type().is_symlink() {
+        return Err(RemoveError::SymlinkedAlias(slug.to_owned()));
+    }
+    if !metadata.is_dir() {
+        return Err(RemoveError::NotADirectory(candidate.display().to_string()));
+    }
+
     let canonical_root =
         std::fs::canonicalize(root).map_err(|error| io_error("canonicalize", root, error))?;
-
-    let candidate = root.join(slug);
-    match std::fs::symlink_metadata(&candidate) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            return Err(RemoveError::SymlinkedAlias(slug.to_owned()));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(RemoveError::NotInstalled(slug.to_owned()));
-        }
-        Err(error) => return Err(io_error("stat", &candidate, error)),
-    }
-
-    let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            RemoveError::NotInstalled(slug.to_owned())
-        } else {
-            io_error("canonicalize", &candidate, error)
-        }
-    })?;
+    let canonical = std::fs::canonicalize(&candidate)
+        .map_err(|error| io_error("canonicalize", &candidate, error))?;
+    // Unreachable without a concurrent swap of the directory tree, kept as a
+    // last guard before a recursive delete.
     if canonical == canonical_root || !canonical.starts_with(&canonical_root) {
         return Err(RemoveError::Escapes(canonical.display().to_string()));
-    }
-
-    let metadata = std::fs::symlink_metadata(&canonical)
-        .map_err(|error| io_error("stat", &canonical, error))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(RemoveError::NotADirectory(canonical.display().to_string()));
     }
     if !canonical.join(WORKFLOW_MD).exists() && !canonical.join(SKILL_MD).exists() {
         return Err(RemoveError::NotABundle(canonical.display().to_string()));
