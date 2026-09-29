@@ -223,6 +223,37 @@ fn edit_refuses_to_overwrite_an_unparseable_body() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn edit_refuses_unparseable_target_even_when_fallback_is_valid() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let dir = temp.path().join("broken");
+    fs::create_dir_all(&dir)?;
+    // WORKFLOW.md exists but is unparseable (no closing ---)
+    fs::write(
+        dir.join("WORKFLOW.md"),
+        "---\nname: broken\ndescription: x\n",
+    )?;
+    // SKILL.md is valid
+    fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: broken\ndescription: old\n---\n\nValid body.\n",
+    )?;
+    let error = scaffold_bundle(temp.path(), &spec("broken"), &edit())
+        .err()
+        .ok_or("edit accepted")?;
+    assert!(
+        error
+            .to_string()
+            .to_lowercase()
+            .contains("could not be parsed"),
+        "{error}"
+    );
+    // Both documents must remain unmodified
+    assert!(fs::read_to_string(dir.join("WORKFLOW.md"))?.contains("name: broken"));
+    assert!(fs::read_to_string(dir.join("SKILL.md"))?.contains("Valid body"));
+    Ok(())
+}
+
+#[test]
 fn edit_finds_bundles_under_legacy_roots() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let legacy = temp.path().join("legacy");
