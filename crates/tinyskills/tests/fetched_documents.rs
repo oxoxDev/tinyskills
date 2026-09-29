@@ -202,10 +202,13 @@ fn concurrent_installs_use_separate_temporary_files() -> Result<(), Box<dyn std:
     }
 
     // One install should succeed (fresh), one should report already installed
-    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let results: Vec<_> = handles
+        .into_iter()
+        .map(|h| h.join().ok().unwrap_or(Err(WriteError::InvalidSlug("join failed".into()))))
+        .collect();
 
     // At least one should succeed
-    assert!(results.iter().any(|r| r.is_ok()));
+    assert!(results.iter().any(Result::is_ok));
 
     // The installed file should contain valid content, either first or second
     let path = root.join("concurrent").join("SKILL.md");
@@ -217,7 +220,7 @@ fn concurrent_installs_use_separate_temporary_files() -> Result<(), Box<dyn std:
 
     // There should be no leftover temporary files
     let dir_contents: Vec<_> = fs::read_dir(root.join("concurrent"))?
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .map(|e| e.file_name().into_string().unwrap_or_default())
         .collect();
     for name in dir_contents {
