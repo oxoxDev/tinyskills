@@ -557,12 +557,22 @@ pub fn write_installed_document(
         }
         Err(_) => {}
     }
-    std::fs::create_dir_all(&target_dir).map_err(|source| WriteError::CreateDir {
+    if let Some(parent) = target_dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| WriteError::CreateDir {
+            path: parent.display().to_string(),
+            source,
+        })?;
+    }
+    std::fs::create_dir(&target_dir).map_err(|source| WriteError::CreateDir {
         path: target_dir.display().to_string(),
         source,
     })?;
 
-    let temp_file = target_dir.join("SKILL.md.tmp");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    let temp_file = target_dir.join(format!("SKILL.md.tmp.{nanos}"));
     let written = std::fs::write(&temp_file, content).map_err(|source| WriteError::Write {
         path: temp_file.display().to_string(),
         source,
@@ -575,7 +585,6 @@ pub fn write_installed_document(
     });
     if let Err(error) = result {
         let _ = std::fs::remove_file(&temp_file);
-        let _ = std::fs::remove_dir(&target_dir);
         return Err(error);
     }
     #[cfg(unix)]
