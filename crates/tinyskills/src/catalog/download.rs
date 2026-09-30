@@ -17,6 +17,8 @@
 
 use serde_json::Value;
 
+use crate::model::SKILL_MD;
+
 const CLAWHUB_SKILLS_API: &str = "https://clawhub.ai/api/v1/skills";
 const GITHUB_RAW: &str = "https://raw.githubusercontent.com";
 const GITHUB_REPOS_API: &str = "https://api.github.com/repos";
@@ -81,7 +83,9 @@ pub fn derive_download_url(
 /// HTML, not raw markdown).
 ///
 /// - blob: `.../github.com/{owner}/{repo}/blob/{branch}/{path}` becomes
-///   `.../raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}`
+///   `.../raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}` when
+///   `{path}` names a `SKILL.md`; any other `.md` file resolves to the
+///   `SKILL.md` in the same directory.
 /// - tree (directory): same rewrite, then append `/SKILL.md`.
 #[must_use]
 pub fn download_url_from_source_url(source_url: &str) -> Option<String> {
@@ -113,13 +117,19 @@ pub fn download_url_from_source_url(source_url: &str) -> Option<String> {
     }
     let raw = format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}");
     match kind {
-        // blob points directly at a file; only append SKILL.md if it isn't one.
+        // blob points at a file. Only a `SKILL.md` is taken as-is; any other
+        // Markdown file (a README, a doc) resolves to the `SKILL.md` beside it,
+        // so a non-skill file carrying frontmatter never installs as a skill.
+        // A path without a `.md` extension is a directory: append SKILL.md.
         "blob" => {
-            if std::path::Path::new(&raw)
+            let (dir, file) = raw.rsplit_once('/')?;
+            if file == SKILL_MD {
+                Some(raw)
+            } else if std::path::Path::new(file)
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
             {
-                Some(raw)
+                Some(format!("{dir}/{SKILL_MD}"))
             } else {
                 Some(format!("{raw}/SKILL.md"))
             }
