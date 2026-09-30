@@ -76,6 +76,39 @@ fn download_url_from_source_url_validates_segments_and_rejects_traversal() {
 }
 
 #[test]
+fn download_url_from_source_url_takes_only_skill_md_blobs_directly() {
+    // A blob naming SKILL.md is the skill file itself.
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/blob/main/skills/x/SKILL.md")
+            .as_deref(),
+        Some("https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md")
+    );
+    // Any other Markdown blob resolves to the SKILL.md beside it (openhuman#6309),
+    // so a README carrying frontmatter never installs as a skill.
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/blob/main/README.md").as_deref(),
+        Some("https://raw.githubusercontent.com/o/r/main/SKILL.md")
+    );
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/blob/main/skills/x/docs.MD")
+            .as_deref(),
+        Some("https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md")
+    );
+    // GitHub raw paths are case-sensitive; only the exact name is taken as-is.
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/blob/main/skills/x/skill.md")
+            .as_deref(),
+        Some("https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md")
+    );
+    // GitHub's plain-view permalink stays rejected rather than building
+    // `SKILL.md?plain=1/SKILL.md`.
+    assert_eq!(
+        download_url_from_source_url("https://github.com/o/r/blob/main/skills/x/SKILL.md?plain=1"),
+        None
+    );
+}
+
+#[test]
 fn skills_sh_ref_parses_listing_urls_only() {
     let skill = SkillsShRef::parse("https://skills.sh/getagentseal/founder-playbook/100m-leads")
         .expect("skills.sh listing");
