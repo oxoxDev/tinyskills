@@ -13,7 +13,7 @@ fn parses_scalar_tool_lists_and_preserves_body() -> Result<(), Box<dyn std::erro
     let (frontmatter, body, warnings) = parse_skill_str(source).ok_or("invalid document")?;
     assert_eq!(frontmatter.allowed_tools, ["Bash", "Read"]);
     assert_eq!(body, "Do it.\n");
-    assert!(warnings.is_empty());
+    assert_eq!(warnings.len(), 0);
     Ok(())
 }
 
@@ -62,7 +62,7 @@ fn allowed_tools_accepts_the_tools_and_snake_case_aliases() -> Result<(), Box<dy
 
 #[test]
 fn allowed_tools_defaults_to_empty_when_absent() -> Result<(), Box<dyn std::error::Error>> {
-    assert!(frontmatter("name: foo")?.allowed_tools.is_empty());
+    assert_eq!(frontmatter("name: foo")?.allowed_tools.len(), 0);
     Ok(())
 }
 

@@ -29,7 +29,7 @@ fn valid_documents_yield_frontmatter_slug_and_warnings() -> Result<(), DocumentE
     assert_eq!(document.frontmatter.description, "does things");
     assert_eq!(document.body, "\nbody\n");
     assert_eq!(document.content, VALID);
-    assert!(document.warnings.is_empty());
+    assert_eq!(document.warnings.len(), 0);
 
     let with_id = "---\nname: x\ndescription: d\nmetadata:\n  id: Custom_ID\n---\n";
     assert_eq!(

@@ -27,19 +27,19 @@ static MATERIALIZED_FILES: &[BundledFile] = &[BundledFile {
 #[test]
 fn parsing_handles_plain_unterminated_and_invalid_yaml() -> Result<(), Box<dyn std::error::Error>> {
     let (frontmatter, body, warnings) = parse_skill_str("plain body").ok_or("plain rejected")?;
-    assert!(frontmatter.name.is_empty());
+    assert_eq!(frontmatter.name.len(), 0);
     assert_eq!(body, "plain body");
-    assert!(warnings.is_empty());
+    assert_eq!(warnings.len(), 0);
     assert!(parse_skill_str("---\nname: demo\n").is_none());
 
     let (frontmatter, _, warnings) =
         parse_skill_str("---\nname: [\n---\nbody\n").ok_or("invalid yaml rejected")?;
-    assert!(frontmatter.name.is_empty());
+    assert_eq!(frontmatter.name.len(), 0);
     assert_eq!(warnings.len(), 1);
     let (empty, body, warnings) = parse_skill_str("").ok_or("empty document rejected")?;
-    assert!(empty.name.is_empty());
-    assert!(body.is_empty());
-    assert!(warnings.is_empty());
+    assert_eq!(empty.name.len(), 0);
+    assert_eq!(body.len(), 0);
+    assert_eq!(warnings.len(), 0);
     Ok(())
 }
 
@@ -88,13 +88,14 @@ fn discovery_normalizes_metadata_and_legacy_manifests() -> Result<(), Box<dyn st
             .prompts,
         ["p.md"]
     );
-    assert!(
-        !found
+    assert_ne!(
+        found
             .iter()
             .find(|skill| skill.dir_name == "broken")
             .ok_or("broken missing")?
             .warnings
-            .is_empty()
+            .len(),
+        0
     );
     Ok(())
 }
@@ -253,7 +254,7 @@ fn bounded_inventory_and_legacy_reads_skip_unsafe_inputs() -> Result<(), Box<dyn
     }
     fs::create_dir_all(&nested)?;
     fs::write(nested.join("ignored"), "too deep")?;
-    assert!(tinyskills::inventory_resources(&dir).is_empty());
+    assert_eq!(tinyskills::inventory_resources(&dir).len(), 0);
 
     let legacy = temp.path().join("legacy");
     fs::create_dir_all(&legacy)?;

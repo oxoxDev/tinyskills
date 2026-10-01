@@ -8,6 +8,6 @@ fn main() {
     };
     assert_eq!(frontmatter.name, "demo");
     assert_eq!(body, "Body\n");
-    assert!(warnings.is_empty());
+    assert_eq!(warnings.len(), 0);
     println!("parsed {}", frontmatter.name);
 }
