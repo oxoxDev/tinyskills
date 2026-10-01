@@ -13,7 +13,7 @@ fn parses_scalar_tool_lists_and_preserves_body() -> Result<(), Box<dyn std::erro
     let (frontmatter, body, warnings) = parse_skill_str(source).ok_or("invalid document")?;
     assert_eq!(frontmatter.allowed_tools, ["Bash", "Read"]);
     assert_eq!(body, "Do it.\n");
-    assert!(warnings.is_empty());
+    assert_eq!(warnings.len(), 0);
     Ok(())
 }
 
