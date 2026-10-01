@@ -102,6 +102,6 @@ fn allowed_tools_accepts_aliases_and_defaults_empty() -> Result<(), serde_yaml::
         parse("allowed_tools: Bash, Read")?.allowed_tools,
         ["Bash", "Read"]
     );
-    assert!(parse("name: x")?.allowed_tools.is_empty());
+    assert_eq!(parse("name: x")?.allowed_tools.len(), 0);
     Ok(())
 }

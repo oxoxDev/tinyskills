@@ -62,7 +62,7 @@ fn allowed_tools_accepts_the_tools_and_snake_case_aliases() -> Result<(), Box<dy
 
 #[test]
 fn allowed_tools_defaults_to_empty_when_absent() -> Result<(), Box<dyn std::error::Error>> {
-    assert!(frontmatter("name: foo")?.allowed_tools.is_empty());
+    assert_eq!(frontmatter("name: foo")?.allowed_tools.len(), 0);
     Ok(())
 }
 

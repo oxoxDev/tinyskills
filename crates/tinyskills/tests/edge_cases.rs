@@ -88,13 +88,14 @@ fn discovery_normalizes_metadata_and_legacy_manifests() -> Result<(), Box<dyn st
             .prompts,
         ["p.md"]
     );
-    assert!(
-        !found
+    assert_ne!(
+        found
             .iter()
             .find(|skill| skill.dir_name == "broken")
             .ok_or("broken missing")?
             .warnings
-            .is_empty()
+            .len(),
+        0
     );
     Ok(())
 }
