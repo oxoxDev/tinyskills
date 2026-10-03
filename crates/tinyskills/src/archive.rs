@@ -59,6 +59,9 @@ impl ArchiveFormat {
     /// tar. `None` for anything else — chosen by name rather than by sniffing,
     /// so a caller can tell a user which formats it takes.
     #[must_use]
+    // The comparisons run on a lowercased copy, which is the case-insensitive
+    // check the lint asks for; `Path::extension` cannot see `.tar.gz`.
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     pub fn from_file_name(name: &str) -> Option<Self> {
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".zip") || lower.ends_with(".skill") {
@@ -336,10 +339,10 @@ fn read_bounded(
 ///
 /// [`ArchiveError::NestedArchive`] for an archive inside the archive.
 fn keep_file(path: &str) -> Result<Option<()>, ArchiveError> {
-    let lower = path.to_ascii_lowercase();
     const NESTED: [&str; 9] = [
         ".zip", ".skill", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar",
     ];
+    let lower = path.to_ascii_lowercase();
     if NESTED.iter().any(|suffix| lower.ends_with(suffix)) {
         return Err(ArchiveError::NestedArchive(path.to_string()));
     }

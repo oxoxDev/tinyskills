@@ -4,6 +4,8 @@
 //! a hand-written struct proves the arithmetic, but only an archive that really
 //! carries the traversal, the link or the bomb proves the reader refuses one.
 
+#![allow(clippy::unwrap_used, clippy::cast_possible_truncation)]
+
 use super::*;
 
 use std::io::{Cursor, Write};
