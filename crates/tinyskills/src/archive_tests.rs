@@ -59,11 +59,26 @@ fn read(format: ArchiveFormat, bytes: &[u8]) -> Result<SkillArchive, ArchiveErro
 
 #[test]
 fn the_format_is_chosen_by_file_name() {
-    assert_eq!(ArchiveFormat::from_file_name("a.zip"), Some(ArchiveFormat::Zip));
-    assert_eq!(ArchiveFormat::from_file_name("A.SKILL"), Some(ArchiveFormat::Zip));
-    assert_eq!(ArchiveFormat::from_file_name("a.tar"), Some(ArchiveFormat::Tar));
-    assert_eq!(ArchiveFormat::from_file_name("a.tar.gz"), Some(ArchiveFormat::TarGz));
-    assert_eq!(ArchiveFormat::from_file_name("a.tgz"), Some(ArchiveFormat::TarGz));
+    assert_eq!(
+        ArchiveFormat::from_file_name("a.zip"),
+        Some(ArchiveFormat::Zip)
+    );
+    assert_eq!(
+        ArchiveFormat::from_file_name("A.SKILL"),
+        Some(ArchiveFormat::Zip)
+    );
+    assert_eq!(
+        ArchiveFormat::from_file_name("a.tar"),
+        Some(ArchiveFormat::Tar)
+    );
+    assert_eq!(
+        ArchiveFormat::from_file_name("a.tar.gz"),
+        Some(ArchiveFormat::TarGz)
+    );
+    assert_eq!(
+        ArchiveFormat::from_file_name("a.tgz"),
+        Some(ArchiveFormat::TarGz)
+    );
     assert_eq!(ArchiveFormat::from_file_name("SKILL.md"), None);
 }
 
@@ -123,20 +138,32 @@ fn macos_bookkeeping_is_dropped() {
 
 #[test]
 fn two_top_directories_are_refused() {
-    let bytes = zip(&[("a/SKILL.md", DOC.as_bytes()), ("b/SKILL.md", DOC.as_bytes())]);
-    assert_eq!(read(ArchiveFormat::Zip, &bytes), Err(ArchiveError::MultipleRoots));
+    let bytes = zip(&[
+        ("a/SKILL.md", DOC.as_bytes()),
+        ("b/SKILL.md", DOC.as_bytes()),
+    ]);
+    assert_eq!(
+        read(ArchiveFormat::Zip, &bytes),
+        Err(ArchiveError::MultipleRoots)
+    );
 }
 
 #[test]
 fn a_root_file_beside_a_directory_is_refused() {
     let bytes = zip(&[("SKILL.md", DOC.as_bytes()), ("a/notes.md", b"x")]);
-    assert_eq!(read(ArchiveFormat::Zip, &bytes), Err(ArchiveError::MultipleRoots));
+    assert_eq!(
+        read(ArchiveFormat::Zip, &bytes),
+        Err(ArchiveError::MultipleRoots)
+    );
 }
 
 #[test]
 fn an_archive_without_a_skill_document_is_refused() {
     let bytes = zip(&[("skill/README.md", b"x")]);
-    assert_eq!(read(ArchiveFormat::Zip, &bytes), Err(ArchiveError::NoSkillDocument));
+    assert_eq!(
+        read(ArchiveFormat::Zip, &bytes),
+        Err(ArchiveError::NoSkillDocument)
+    );
 }
 
 #[test]
@@ -161,14 +188,34 @@ fn bytes_that_are_not_an_archive_are_refused() {
 fn every_escaping_path_is_refused_in_both_formats() {
     for (path, expected) in [
         ("../SKILL.md", ArchiveError::Traversal("../SKILL.md".into())),
-        ("skill/../../x", ArchiveError::Traversal("skill/../../x".into())),
-        ("/etc/SKILL.md", ArchiveError::AbsolutePath("/etc/SKILL.md".into())),
-        ("C:/SKILL.md", ArchiveError::AbsolutePath("C:/SKILL.md".into())),
-        ("skill\\SKILL.md", ArchiveError::BackslashPath("skill\\SKILL.md".into())),
+        (
+            "skill/../../x",
+            ArchiveError::Traversal("skill/../../x".into()),
+        ),
+        (
+            "/etc/SKILL.md",
+            ArchiveError::AbsolutePath("/etc/SKILL.md".into()),
+        ),
+        (
+            "C:/SKILL.md",
+            ArchiveError::AbsolutePath("C:/SKILL.md".into()),
+        ),
+        (
+            "skill\\SKILL.md",
+            ArchiveError::BackslashPath("skill\\SKILL.md".into()),
+        ),
     ] {
         let entries: &[(&str, &[u8])] = &[(path, DOC.as_bytes())];
-        assert_eq!(read(ArchiveFormat::Zip, &zip(entries)), Err(expected.clone()), "zip {path}");
-        assert_eq!(read(ArchiveFormat::Tar, &tar(entries)), Err(expected), "tar {path}");
+        assert_eq!(
+            read(ArchiveFormat::Zip, &zip(entries)),
+            Err(expected.clone()),
+            "zip {path}"
+        );
+        assert_eq!(
+            read(ArchiveFormat::Tar, &tar(entries)),
+            Err(expected),
+            "tar {path}"
+        );
     }
 }
 
@@ -176,7 +223,11 @@ fn every_escaping_path_is_refused_in_both_formats() {
 fn a_zip_symlink_is_refused() {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     writer
-        .add_symlink("skill/SKILL.md", "/etc/passwd", SimpleFileOptions::default())
+        .add_symlink(
+            "skill/SKILL.md",
+            "/etc/passwd",
+            SimpleFileOptions::default(),
+        )
         .unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     assert_eq!(
@@ -206,7 +257,10 @@ fn a_tar_symlink_or_hard_link_is_refused() {
 
 #[test]
 fn a_nested_archive_is_refused() {
-    let bytes = zip(&[("skill/SKILL.md", DOC.as_bytes()), ("skill/more.zip", b"PK")]);
+    let bytes = zip(&[
+        ("skill/SKILL.md", DOC.as_bytes()),
+        ("skill/more.zip", b"PK"),
+    ]);
     assert_eq!(
         read(ArchiveFormat::Zip, &bytes),
         Err(ArchiveError::NestedArchive("skill/more.zip".into()))
@@ -217,9 +271,14 @@ fn a_nested_archive_is_refused() {
 
 #[test]
 fn too_many_entries_are_refused() {
-    let names: Vec<String> = (0..=MAX_ARCHIVE_ENTRIES).map(|i| format!("s/{i}.md")).collect();
+    let names: Vec<String> = (0..=MAX_ARCHIVE_ENTRIES)
+        .map(|i| format!("s/{i}.md"))
+        .collect();
     let entries: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b"x"[..])).collect();
-    for (format, bytes) in [(ArchiveFormat::Zip, zip(&entries)), (ArchiveFormat::Tar, tar(&entries))] {
+    for (format, bytes) in [
+        (ArchiveFormat::Zip, zip(&entries)),
+        (ArchiveFormat::Tar, tar(&entries)),
+    ] {
         assert_eq!(
             read(format, &bytes),
             Err(ArchiveError::TooManyEntries {
@@ -237,7 +296,10 @@ fn a_declared_size_over_the_cap_is_refused() {
         max_bytes: 16,
     };
     let entries: &[(&str, &[u8])] = &[("SKILL.md", DOC.as_bytes())];
-    for (format, bytes) in [(ArchiveFormat::Zip, zip(entries)), (ArchiveFormat::Tar, tar(entries))] {
+    for (format, bytes) in [
+        (ArchiveFormat::Zip, zip(entries)),
+        (ArchiveFormat::Tar, tar(entries)),
+    ] {
         assert_eq!(
             read_skill_archive(format, &bytes, &limits),
             Err(ArchiveError::TooLarge { max_bytes: 16 }),
@@ -246,12 +308,19 @@ fn a_declared_size_over_the_cap_is_refused() {
     }
 }
 
-/// A gzip stream of nothing but zeros expands enormously; the decoder is read
-/// through a bound so it is refused rather than inflated.
+/// A few kilobytes of gzip that expand to megabytes are refused at the
+/// ceiling rather than inflated.
 #[test]
-fn a_gzip_bomb_is_bounded() {
-    let bomb = gzip(&vec![b'a'; 4 * 1024 * 1024]);
-    assert!(read(ArchiveFormat::TarGz, &bomb).is_err());
+fn a_gzip_bomb_is_refused_at_the_ceiling() {
+    let big = vec![b'a'; 4 * 1024 * 1024];
+    let bomb = gzip(&tar(&[("SKILL.md", &big)]));
+    assert!(bomb.len() < 64 * 1024, "sanity: it compresses");
+    assert_eq!(
+        read(ArchiveFormat::TarGz, &bomb),
+        Err(ArchiveError::TooLarge {
+            max_bytes: MAX_ARCHIVE_BYTES
+        })
+    );
 }
 
 #[test]
