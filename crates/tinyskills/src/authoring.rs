@@ -219,6 +219,13 @@ pub fn validate_description(description: &str) -> Result<&str, AuthoringError> {
 /// Returns an error when nothing alphanumeric remains or the slug exceeds
 /// [`MAX_NAME_LEN`].
 pub fn slugify(name: &str) -> Result<String, AuthoringError> {
+    crate::slug::slugify_with(name, &crate::slug::SlugRules::default())
+}
+
+/// The unbounded derivation behind [`slugify`] and
+/// [`crate::slugify_with`]: lowercase ASCII alphanumerics, separators folded
+/// to single `-`, everything else dropped.
+pub(crate) fn slug_from_name(name: &str) -> Result<String, AuthoringError> {
     let mut out = String::new();
     let mut prev_hyphen = true;
     for ch in name.chars() {
@@ -236,12 +243,6 @@ pub fn slugify(name: &str) -> Result<String, AuthoringError> {
     if out.is_empty() {
         return Err(AuthoringError::NoSlug {
             name: name.to_owned(),
-        });
-    }
-    if out.len() > MAX_NAME_LEN {
-        return Err(AuthoringError::SlugTooLong {
-            slug: out,
-            max: MAX_NAME_LEN,
         });
     }
     Ok(out)
