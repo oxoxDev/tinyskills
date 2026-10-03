@@ -20,6 +20,11 @@ tempfile = "3"
 tokio = { version = "1", features = ["macros", "net", "rt"] }
 url = "2"
 rustix = { version = "1.1", features = ["fs"] }
+# Reading uploaded skill archives (the optional `archive` feature): zip with
+# deflate only, tar, and gzip for `.tar.gz`.
+zip = { version = "7", default-features = false, features = ["deflate"] }
+tar = { version = "0.4", default-features = false }
+flate2 = "1"
 
 # Lints apply to every member that opts in with `[lints] workspace = true`, and
 # to every target of that member. CI runs clippy with `-D warnings`, so anything

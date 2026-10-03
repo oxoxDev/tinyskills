@@ -18,6 +18,15 @@ thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
 rustix.workspace = true
+zip = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+
+[features]
+# `read_skill_archive`: read an uploaded `.zip`/`.skill`, `.tar` or `.tar.gz`
+# skill archive, refusing traversal, links, nested archives and bombs. Off by
+# default so a host that never accepts uploads links no archive code.
+archive = ["dep:zip", "dep:tar", "dep:flate2"]
 
 [dev-dependencies]
 tempfile.workspace = true
