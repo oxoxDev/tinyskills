@@ -102,8 +102,7 @@ impl ScanField {
             Self::Frontmatter(line) => {
                 let key = line
                     .split_once(':')
-                    .map(|(key, _)| key.trim())
-                    .unwrap_or("<unrecognised>");
+                    .map_or("<unrecognised>", |(key, _)| key.trim());
                 let key: String = key
                     .chars()
                     .filter(|c| !checks::is_invisible(*c))
