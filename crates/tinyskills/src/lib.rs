@@ -15,6 +15,7 @@ mod install;
 mod model;
 mod remove;
 mod resource;
+mod scan;
 mod trigger;
 
 pub use authoring::{
@@ -47,4 +48,8 @@ pub use model::{
 };
 pub use remove::{RemoveError, remove_bundle};
 pub use resource::{ResourceError, read_resource, resolve_skill};
+pub use scan::{
+    Finding, ScanCheck, ScanDocument, ScanField, ScanReport, ScanResource, Verdict, is_invisible,
+    sanitize_catalogue_text, scan_skill,
+};
 pub use trigger::TriggerPattern;
