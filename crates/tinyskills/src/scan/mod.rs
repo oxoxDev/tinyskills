@@ -110,7 +110,14 @@ impl ScanField {
                     .collect();
                 format!("the frontmatter line `{key}`")
             }
-            Self::Resource(path) => format!("the bundled file `{path}`"),
+            Self::Resource(path) => {
+                let path: String = path
+                    .chars()
+                    .filter(|c| !checks::is_invisible(*c))
+                    .take(40)
+                    .collect();
+                format!("the bundled file `{}`", path.replace('`', "’"))
+            }
         }
     }
 }

@@ -429,6 +429,16 @@ fn a_frontmatter_label_strips_invisible_characters_and_is_capped() {
 }
 
 #[test]
+fn a_resource_label_strips_invisible_characters_and_escapes_backticks() {
+    let path = format!("notes\u{202e}`{}", "x".repeat(80));
+    let label = ScanField::Resource(path).label();
+    assert!(!label.contains('\u{202e}'), "{label:?}");
+    assert_eq!(label.matches('`').count(), 2, "{label:?}");
+    assert!(label.contains("notes’"), "{label:?}");
+    assert!(label.chars().count() < 70, "{label:?}");
+}
+
+#[test]
 fn a_frontmatter_line_with_no_key_gets_a_generic_label() {
     let mut doc = benign();
     doc.extra_frontmatter = vec!["\u{200b}not a key-value line".to_string()];

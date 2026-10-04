@@ -89,7 +89,21 @@ pub fn slugify_with(name: &str, rules: &SlugRules<'_>) -> Result<String, Authori
         });
     };
     if rules.reserved.contains(&slug.as_str()) {
-        slug = format!("{}-2", cut(&slug, rules.max_chars.saturating_sub(2)));
+        let original = slug.clone();
+        for suffix in 2_u128.. {
+            let ending = format!("-{suffix}");
+            if ending.len() >= rules.max_chars {
+                return Err(AuthoringError::SlugTooLong {
+                    slug: original,
+                    max: rules.max_chars,
+                });
+            }
+            let candidate = format!("{}{}", cut(&slug, rules.max_chars - ending.len()), ending);
+            if !candidate.is_empty() && !rules.reserved.contains(&candidate.as_str()) {
+                slug = candidate;
+                break;
+            }
+        }
     }
     Ok(slug)
 }
@@ -132,3 +146,7 @@ fn cut(slug: &str, max: usize) -> String {
         .trim_end_matches('-')
         .to_string()
 }
+
+#[cfg(test)]
+#[path = "slug_tests.rs"]
+mod tests;

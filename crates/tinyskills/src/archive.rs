@@ -247,14 +247,18 @@ fn read_zip(bytes: &[u8], limits: &ArchiveLimits) -> Result<Vec<Entry>, ArchiveE
         let entry = archive.by_index_raw(index).map_err(unreadable)?;
         let path = entry.name().to_string();
         check_entry_path(&path)?;
+        let path = normalize_entry_path(&path);
+        if path.is_empty() {
+            continue;
+        }
         if entry
             .unix_mode()
             .is_some_and(|mode| mode & 0o170_000 == 0o120_000)
         {
-            return Err(ArchiveError::Link(path));
+            return Err(ArchiveError::Link(path.to_string()));
         }
         budget.admit(entry.size())?;
-        if entry.is_dir() || keep_file(&path)?.is_none() {
+        if entry.is_dir() || keep_file(path)?.is_none() {
             continue;
         }
         wanted.push(index);
@@ -264,7 +268,7 @@ fn read_zip(bytes: &[u8], limits: &ArchiveLimits) -> Result<Vec<Entry>, ArchiveE
     let mut remaining = limits.max_bytes;
     for index in wanted {
         let entry = archive.by_index(index).map_err(unreadable)?;
-        let path = entry.name().to_string();
+        let path = normalize_entry_path(entry.name()).to_string();
         let bytes = read_bounded(entry, &mut remaining, limits.max_bytes)?;
         files.push(Entry { path, bytes });
     }
@@ -293,6 +297,10 @@ fn read_tar(reader: impl Read, limits: &ArchiveLimits) -> Result<Vec<Entry>, Arc
         let path = String::from_utf8(entry.path_bytes().into_owned())
             .map_err(|_| ArchiveError::Unreadable("an entry path is not UTF-8".to_string()))?;
         check_entry_path(&path)?;
+        let path = normalize_entry_path(&path).to_string();
+        if path.is_empty() {
+            continue;
+        }
         if kind.is_symlink() || kind.is_hard_link() {
             return Err(ArchiveError::Link(path));
         }
@@ -375,6 +383,12 @@ fn check_entry_path(path: &str) -> Result<(), ArchiveError> {
         return Err(ArchiveError::PathTooLong);
     }
     Ok(())
+}
+
+/// Removes harmless leading `./` components from archive entry paths.
+fn normalize_entry_path(path: &str) -> &str {
+    let path = path.trim_start_matches("./");
+    if path == "." { "" } else { path }
 }
 
 /// Finds the one skill directory and splits its document from its resources.

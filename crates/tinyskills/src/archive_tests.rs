@@ -91,7 +91,7 @@ fn a_document_at_the_root_has_no_root_directory() {
     let read = read(ArchiveFormat::Zip, &zip(&[("SKILL.md", DOC.as_bytes())])).unwrap();
     assert_eq!(read.root, None);
     assert_eq!(read.document, DOC);
-    assert!(read.resources.is_empty());
+    assert_eq!(read.resources, Vec::<ArchiveFile>::new());
 }
 
 #[test]
@@ -135,7 +135,33 @@ fn macos_bookkeeping_is_dropped() {
     ]);
     let read = read(ArchiveFormat::Zip, &bytes).unwrap();
     assert_eq!(read.root.as_deref(), Some("skill"));
-    assert!(read.resources.is_empty(), "{:?}", read.resources);
+    assert_eq!(read.resources, Vec::<ArchiveFile>::new());
+}
+
+#[test]
+fn leading_dot_segments_are_removed_from_zip_and_tar_entries() {
+    let entries = [("./press-outreach/SKILL.md", DOC.as_bytes())];
+    for (format, bytes) in [
+        (ArchiveFormat::Zip, zip(&entries)),
+        (ArchiveFormat::Tar, tar(&entries)),
+    ] {
+        let read = read(format, &bytes).unwrap();
+        assert_eq!(read.root.as_deref(), Some("press-outreach"));
+        assert_eq!(read.document, DOC);
+    }
+}
+
+#[test]
+fn dot_only_archive_entries_are_ignored() {
+    let entries = [("./", b"".as_slice()), ("./SKILL.md", DOC.as_bytes())];
+    for (format, bytes) in [
+        (ArchiveFormat::Zip, zip(&entries)),
+        (ArchiveFormat::Tar, tar(&entries)),
+    ] {
+        let read = read(format, &bytes).unwrap();
+        assert_eq!(read.root, None);
+        assert_eq!(read.document, DOC);
+    }
 }
 
 #[test]
