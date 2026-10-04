@@ -6,6 +6,8 @@
 //! such as installation roots, workspace trust, RPC, approvals, and execution
 //! remains with the embedding host.
 
+#[cfg(feature = "archive")]
+mod archive;
 mod authoring;
 mod bundle;
 mod catalog;
@@ -15,8 +17,15 @@ mod install;
 mod model;
 mod remove;
 mod resource;
+mod scan;
+mod slug;
 mod trigger;
 
+#[cfg(feature = "archive")]
+pub use archive::{
+    ArchiveError, ArchiveFile, ArchiveFormat, ArchiveLimits, MAX_ARCHIVE_BYTES,
+    MAX_ARCHIVE_ENTRIES, SkillArchive, read_skill_archive,
+};
 pub use authoring::{
     AuthoringError, BundleDocument, BundleSpec, ScaffoldOptions, ScaffoldOutcome,
     render_workflow_frontmatter, render_workflow_md, scaffold_bundle, slugify,
@@ -47,4 +56,9 @@ pub use model::{
 };
 pub use remove::{RemoveError, remove_bundle};
 pub use resource::{ResourceError, read_resource, resolve_skill};
+pub use scan::{
+    Finding, ScanCheck, ScanDocument, ScanField, ScanReport, ScanResource, Verdict, is_invisible,
+    sanitize_catalogue_text, scan_skill,
+};
+pub use slug::{SlugError, SlugRules, slugify_with, validate_slug};
 pub use trigger::TriggerPattern;

@@ -39,6 +39,9 @@ for skill in skills {
 - fetched single-document installs: `validate_fetched_document`, `redact_url`, and an atomic `write_installed_document` with rollback
 - `TriggerPattern` parsing and matching for `triggers:` frontmatter
 - `read_document` for size-bounded, symlink-free, UTF-8 reads of documents and sidecars
+- supply-chain scan of untrusted skill text: `scan_skill` over a `ScanDocument` and its bundled files returns `pass`/`warn`/`block` findings (invisible/bidi/zero-width code points, hard-coded credentials, and escaping resource paths block; agent-addressed text, fetch-and-exec pipelines, and undeclared MCP references warn), plus `sanitize_catalogue_text` for rendering untrusted text into a prompt as data
+- product slug bounds: `SlugRules` (length cap, reserved names, truncation) for `slugify_with` and `validate_slug`
+- `read_skill_archive` (feature `archive`): reads a `.zip`/`.skill`, `.tar`, or `.tar.gz` upload into its `SKILL.md`, root directory, and bundled files. It refuses traversal, absolute or backslash paths, symlinks and hard links, and nested archives, and checks entry-count and expanded-size caps before reading any content
 
 ## Development
 

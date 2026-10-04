@@ -27,6 +27,9 @@ crates/tinyskills/
 │   ├── authoring.rs    # slugs, document rendering, bundle scaffolding
 │   ├── remove.rs       # defensive bundle removal
 │   ├── trigger.rs      # `triggers:` pattern parsing and matching
+│   ├── scan/           # supply-chain scan of untrusted skill text, catalogue sanitizer
+│   ├── slug.rs         # host slug bounds: length cap, reserved names
+│   ├── archive.rs      # `archive` feature: zip/tar upload reader
 │   ├── resource.rs     # safe lookup and resource reads
 │   └── bundle.rs       # compile-time bundle materialization
 └── tests/

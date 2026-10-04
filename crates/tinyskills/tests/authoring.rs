@@ -3,9 +3,9 @@
 use std::fs;
 
 use tinyskills::{
-    AuthoringError, BundleDocument, BundleSpec, ScaffoldOptions, parse_skill_str,
-    render_workflow_frontmatter, render_workflow_md, scaffold_bundle, slugify,
-    validate_description, validate_display_name, yaml_scalar,
+    AuthoringError, BundleDocument, BundleSpec, MAX_NAME_LEN, ScaffoldOptions, SlugError,
+    SlugRules, parse_skill_str, render_workflow_frontmatter, render_workflow_md, scaffold_bundle,
+    slugify, slugify_with, validate_description, validate_display_name, validate_slug, yaml_scalar,
 };
 
 fn spec(slug: &str) -> BundleSpec {
@@ -288,4 +288,88 @@ fn scaffold_refuses_a_symlinked_bundle_dir() -> Result<(), Box<dyn std::error::E
     assert!(matches!(error, AuthoringError::SymlinkedDir { .. }));
     assert!(fs::read_dir(outside.path())?.next().is_none());
     Ok(())
+}
+
+// --- product bounds on slugs ---
+
+/// A host whose skill routes sit beside static ones, with a tighter cap.
+const PRODUCT: SlugRules<'static> = SlugRules {
+    max_chars: 12,
+    reserved: &["draft", "upload"],
+    truncate: true,
+};
+
+#[test]
+fn default_slug_rules_match_slugify() -> Result<(), AuthoringError> {
+    let rules = SlugRules::default();
+    assert_eq!(rules.max_chars, MAX_NAME_LEN);
+    assert_eq!(
+        slugify_with("Hello  World", &rules)?,
+        slugify("Hello  World")?
+    );
+    assert!(matches!(
+        slugify_with(&"a".repeat(65), &rules),
+        Err(AuthoringError::SlugTooLong { .. })
+    ));
+    Ok(())
+}
+
+/// Truncating keeps a long name authorable instead of making its author
+/// rename it to satisfy a limit they cannot see.
+#[test]
+fn a_truncating_rule_cuts_at_the_cap_without_a_trailing_dash() -> Result<(), AuthoringError> {
+    assert_eq!(
+        slugify_with("Quarterly Board Pack", &PRODUCT)?,
+        "quarterly-bo"
+    );
+    assert_eq!(slugify_with("Sales Repor Q3", &PRODUCT)?, "sales-repor");
+    Ok(())
+}
+
+/// A derived slug never lands on a reserved one: it would be created and then
+/// unreachable behind the static route of the same name.
+#[test]
+fn slugify_steps_around_a_reserved_slug() -> Result<(), AuthoringError> {
+    assert_eq!(slugify_with("Draft", &PRODUCT)?, "draft-2");
+    assert_eq!(slugify_with("Drafting", &PRODUCT)?, "drafting");
+    Ok(())
+}
+
+#[test]
+fn validate_slug_accepts_a_safe_bounded_unreserved_slug() {
+    assert_eq!(
+        validate_slug("press-outreach", &SlugRules::default()),
+        Ok(())
+    );
+    assert_eq!(validate_slug("a1", &PRODUCT), Ok(()));
+}
+
+#[test]
+fn validate_slug_names_each_refusal() {
+    assert_eq!(validate_slug("", &PRODUCT), Err(SlugError::Empty));
+    for bad in ["-lead", "Upper", "under_score", "a/b", "..", "sp ace"] {
+        assert_eq!(
+            validate_slug(bad, &PRODUCT),
+            Err(SlugError::InvalidShape { slug: bad.into() }),
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        validate_slug("thirteen-char", &PRODUCT),
+        Err(SlugError::TooLong {
+            length: 13,
+            max: 12
+        })
+    );
+    assert_eq!(
+        validate_slug("upload", &PRODUCT),
+        Err(SlugError::Reserved {
+            slug: "upload".into()
+        })
+    );
+    let message = SlugError::Reserved {
+        slug: "upload".into(),
+    }
+    .to_string();
+    assert!(message.contains("reserved"), "{message}");
 }
