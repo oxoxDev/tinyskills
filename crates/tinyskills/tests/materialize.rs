@@ -101,7 +101,7 @@ fn an_empty_set_leaves_an_empty_root() -> TestResult {
     let report = materialize_tree(&root, &[])?;
     assert_eq!(report, MaterializeReport::default());
     assert!(root.is_dir());
-    assert!(names(&root)?.is_empty());
+    assert_eq!(names(&root)?, Vec::<String>::new());
     Ok(())
 }
 

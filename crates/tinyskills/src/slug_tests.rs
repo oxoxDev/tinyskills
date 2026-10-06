@@ -32,7 +32,7 @@ fn new_and_default_are_the_slugify_rules() {
     let rules = SlugRules::new();
     assert_eq!(rules, SlugRules::default());
     assert_eq!(rules.max_chars, MAX_NAME_LEN);
-    assert!(rules.reserved.is_empty());
+    assert_eq!(rules.reserved, &[] as &[&str]);
     assert!(!rules.truncate);
     assert_eq!(rules.punctuation, PunctuationRule::Drop);
     assert_eq!(rules.fallback, None);

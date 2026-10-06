@@ -15,7 +15,7 @@ fn reads_the_four_scalars_and_keeps_the_body_verbatim() -> Result<(), FlatError>
     assert_eq!(doc.category.as_deref(), Some("research"));
     assert_eq!(doc.version.as_deref(), Some("1.0.0"));
     assert_eq!(doc.body, "# Web Research\n\n## When to use\n");
-    assert!(doc.extra_frontmatter.is_empty());
+    assert_eq!(doc.extra_frontmatter, Vec::<String>::new());
     Ok(())
 }
 
@@ -195,7 +195,7 @@ fn render_collapses_newlines_so_a_value_cannot_inject_frontmatter() -> Result<()
     );
     let parsed = parse_flat(&rendered)?;
     assert_eq!(parsed.description, "a real description");
-    assert!(parsed.extra_frontmatter.is_empty());
+    assert_eq!(parsed.extra_frontmatter, Vec::<String>::new());
     Ok(())
 }
 
