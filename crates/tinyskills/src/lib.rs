@@ -1,8 +1,10 @@
 //! Portable primitives for agentskills.io-style skill bundles.
 //!
 //! `tinyskills` owns the host-independent parts of skill handling: document
-//! parsing, metadata, deterministic discovery, collision precedence, safe
-//! resource reads, and materialization of compile-time bundles. Product policy
+//! parsing (YAML for discovery, [`parse_flat`] for documents a host stores and
+//! re-serves), metadata, deterministic discovery, collision precedence, safe
+//! resource reads, document digests, and materialization of compile-time
+//! bundles and resolved skill trees. Product policy
 //! such as installation roots, workspace trust, RPC, approvals, and execution
 //! remains with the embedding host.
 
