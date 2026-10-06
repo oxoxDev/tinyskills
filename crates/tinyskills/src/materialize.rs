@@ -7,6 +7,9 @@
 //! set disappears from disk.
 
 use std::collections::BTreeSet;
+use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::catalog::is_safe_segment;
@@ -16,11 +19,15 @@ use crate::model::SKILL_MD;
 /// entry's directory.
 pub const MAX_MATERIALIZE_DEPTH: usize = 32;
 
+/// The largest single file [`materialize_tree`] copies out of a bundle
+/// directory.
+pub const MAX_MATERIALIZE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Where one materialized skill's content comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MaterializeSource {
     /// A bundle directory, copied recursively: regular files and directories
-    /// only, symlinks skipped.
+    /// only, symlinks skipped. The directory itself must not be a symlink.
     Dir(PathBuf),
     /// One `SKILL.md` document, written as the only file.
     Document(String),
@@ -71,6 +78,20 @@ pub enum MaterializeError {
         /// The limit.
         max: usize,
     },
+    /// A source directory is itself a symlink.
+    #[error("{path} is a symlink; a bundle directory must be a real directory")]
+    SymlinkedSource {
+        /// The refused source directory.
+        path: PathBuf,
+    },
+    /// A source file is larger than [`MAX_MATERIALIZE_FILE_BYTES`].
+    #[error("{path} is larger than {max} bytes")]
+    FileTooLarge {
+        /// The oversized file.
+        path: PathBuf,
+        /// The limit.
+        max: u64,
+    },
     /// A filesystem operation failed.
     #[error("{context} {path}: {source}")]
     Io {
@@ -93,11 +114,23 @@ pub enum MaterializeError {
 /// [`MaterializeSource::Dir`] as a recursive copy that skips symlinks and
 /// other non-regular files.
 ///
+/// Source files larger than [`MAX_MATERIALIZE_FILE_BYTES`] are refused. On
+/// Unix each source entry is opened relative to its parent directory without
+/// following symlinks, so replacing an entry with a symlink while the copy
+/// runs fails the copy rather than reading through the link. Destination
+/// entries are created exclusively and never follow a symlink in the final
+/// path component. Neither guarantee covers the ancestors of `root` or of a
+/// source directory, nor a non-Unix platform: callers must own the
+/// destination's parent directory and must not copy a source tree an
+/// untrusted party can modify concurrently.
+///
 /// # Errors
 ///
 /// [`MaterializeError::UnsafeDirName`] or
 /// [`MaterializeError::DuplicateDirName`] before anything is touched;
-/// [`MaterializeError::TooDeep`] when a source nests past
+/// [`MaterializeError::SymlinkedSource`] when a source directory is a
+/// symlink; [`MaterializeError::FileTooLarge`] when a source file exceeds the
+/// limit; [`MaterializeError::TooDeep`] when a source nests past
 /// [`MAX_MATERIALIZE_DEPTH`]; [`MaterializeError::Io`] when clearing, creating,
 /// reading, or writing fails. A failure part-way leaves the tree partially
 /// written; the next call rebuilds it.
@@ -126,11 +159,15 @@ pub fn materialize_tree(
     for entry in entries {
         let dest = root.join(&entry.dir_name);
         match &entry.source {
-            MaterializeSource::Dir(src) => copy_dir(src, &dest, 0, &mut report)?,
+            MaterializeSource::Dir(src) => {
+                let source = SourceDir::open_root(src)?;
+                copy_dir(&source, src, &dest, 0, &mut report)?;
+            }
             MaterializeSource::Document(document) => {
-                at("creating skill dir", &dest, std::fs::create_dir_all(&dest))?;
+                at("creating skill dir", &dest, std::fs::create_dir(&dest))?;
                 let file = dest.join(SKILL_MD);
-                at("writing", &file, std::fs::write(&file, document))?;
+                let mut out = create_file(&file)?;
+                at("writing", &file, out.write_all(document.as_bytes()))?;
                 report.files += 1;
             }
         }
@@ -151,6 +188,7 @@ fn clear(root: &Path) -> Result<(), MaterializeError> {
 }
 
 fn copy_dir(
+    source: &SourceDir,
     src: &Path,
     dest: &Path,
     depth: usize,
@@ -162,23 +200,188 @@ fn copy_dir(
             max: MAX_MATERIALIZE_DEPTH,
         });
     }
-    at("creating", dest, std::fs::create_dir_all(dest))?;
-    let entries = at("reading", src, std::fs::read_dir(src))?;
-    for entry in entries {
-        let entry = at("reading", src, entry)?;
-        let from = entry.path();
-        let file_type = at("reading", &from, entry.file_type())?;
-        let to = dest.join(entry.file_name());
-        if file_type.is_symlink() {
-            report.skipped_symlinks += 1;
-        } else if file_type.is_dir() {
-            copy_dir(&from, &to, depth + 1, report)?;
-        } else if file_type.is_file() {
-            at("copying", &from, std::fs::copy(&from, &to))?;
-            report.files += 1;
+    at("creating", dest, std::fs::create_dir(dest))?;
+    for (name, kind) in at("reading", src, source.entries())? {
+        let from = src.join(&name);
+        let to = dest.join(&name);
+        match kind {
+            EntryKind::Symlink => report.skipped_symlinks += 1,
+            EntryKind::Dir => {
+                let child = at("reading", &from, source.open_dir(&name))?;
+                copy_dir(&child, &from, &to, depth + 1, report)?;
+            }
+            EntryKind::File => {
+                copy_file(source, &name, &from, &to)?;
+                report.files += 1;
+            }
+            EntryKind::Other => {}
         }
     }
     Ok(())
+}
+
+fn copy_file(
+    source: &SourceDir,
+    name: &OsString,
+    from: &Path,
+    to: &Path,
+) -> Result<(), MaterializeError> {
+    let file = at("copying", from, source.open_file(name))?;
+    let metadata = at("copying", from, file.metadata())?;
+    if !metadata.is_file() {
+        return Ok(());
+    }
+    let too_large = || MaterializeError::FileTooLarge {
+        path: from.to_path_buf(),
+        max: MAX_MATERIALIZE_FILE_BYTES,
+    };
+    if metadata.len() > MAX_MATERIALIZE_FILE_BYTES {
+        return Err(too_large());
+    }
+    let mut out = create_file(to)?;
+    let copied = at(
+        "copying",
+        from,
+        std::io::copy(&mut file.take(MAX_MATERIALIZE_FILE_BYTES + 1), &mut out),
+    )?;
+    if copied > MAX_MATERIALIZE_FILE_BYTES {
+        return Err(too_large());
+    }
+    Ok(())
+}
+
+fn create_file(path: &Path) -> Result<File, MaterializeError> {
+    at(
+        "creating",
+        path,
+        OpenOptions::new().write(true).create_new(true).open(path),
+    )
+}
+
+enum EntryKind {
+    Dir,
+    File,
+    Symlink,
+    Other,
+}
+
+#[cfg(unix)]
+struct SourceDir(File);
+
+#[cfg(unix)]
+impl SourceDir {
+    fn open_root(path: &Path) -> Result<Self, MaterializeError> {
+        let metadata = at("reading", path, std::fs::symlink_metadata(path))?;
+        if metadata.file_type().is_symlink() {
+            return Err(MaterializeError::SymlinkedSource {
+                path: path.to_path_buf(),
+            });
+        }
+        let fd = at("reading", path, open_nofollow_dir(rustix::fs::CWD, path))?;
+        Ok(Self(File::from(fd)))
+    }
+
+    fn open_dir(&self, name: &OsString) -> std::io::Result<Self> {
+        let fd = open_nofollow_dir(&self.0, name)?;
+        Ok(Self(File::from(fd)))
+    }
+
+    fn open_file(&self, name: &OsString) -> std::io::Result<File> {
+        use rustix::fs::{Mode, OFlags, openat};
+        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
+        Ok(File::from(openat(&self.0, name, flags, Mode::empty())?))
+    }
+
+    fn entries(&self) -> std::io::Result<Vec<(OsString, EntryKind)>> {
+        use rustix::fs::{AtFlags, Dir, FileType, statat};
+        use std::os::unix::ffi::OsStringExt;
+        let mut found = Vec::new();
+        for entry in Dir::read_from(&self.0)? {
+            let entry = entry?;
+            let raw = entry.file_name().to_bytes();
+            if raw == b"." || raw == b".." {
+                continue;
+            }
+            let name = OsString::from_vec(raw.to_vec());
+            let file_type = match entry.file_type() {
+                FileType::Unknown => {
+                    let stat = statat(&self.0, &name, AtFlags::SYMLINK_NOFOLLOW)?;
+                    FileType::from_raw_mode(stat.st_mode as _)
+                }
+                known => known,
+            };
+            let kind = match file_type {
+                FileType::Symlink => EntryKind::Symlink,
+                FileType::Directory => EntryKind::Dir,
+                FileType::RegularFile => EntryKind::File,
+                _ => EntryKind::Other,
+            };
+            found.push((name, kind));
+        }
+        Ok(found)
+    }
+}
+
+#[cfg(unix)]
+fn open_nofollow_dir<Fd: std::os::fd::AsFd, P: rustix::path::Arg>(
+    parent: Fd,
+    name: P,
+) -> std::io::Result<std::os::fd::OwnedFd> {
+    use rustix::fs::{Mode, OFlags, openat};
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    Ok(openat(parent, name, flags, Mode::empty())?)
+}
+
+#[cfg(not(unix))]
+struct SourceDir(PathBuf);
+
+#[cfg(not(unix))]
+impl SourceDir {
+    fn open_root(path: &Path) -> Result<Self, MaterializeError> {
+        let metadata = at("reading", path, std::fs::symlink_metadata(path))?;
+        if metadata.file_type().is_symlink() {
+            return Err(MaterializeError::SymlinkedSource {
+                path: path.to_path_buf(),
+            });
+        }
+        at("reading", path, std::fs::read_dir(path))?;
+        Ok(Self(path.to_path_buf()))
+    }
+
+    fn open_dir(&self, name: &OsString) -> std::io::Result<Self> {
+        let path = self.0.join(name);
+        if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+            return Err(std::io::Error::other("directory became a symlink"));
+        }
+        Ok(Self(path))
+    }
+
+    fn open_file(&self, name: &OsString) -> std::io::Result<File> {
+        let path = self.0.join(name);
+        if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+            return Err(std::io::Error::other("file became a symlink"));
+        }
+        File::open(path)
+    }
+
+    fn entries(&self) -> std::io::Result<Vec<(OsString, EntryKind)>> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(&self.0)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let kind = if file_type.is_symlink() {
+                EntryKind::Symlink
+            } else if file_type.is_dir() {
+                EntryKind::Dir
+            } else if file_type.is_file() {
+                EntryKind::File
+            } else {
+                EntryKind::Other
+            };
+            found.push((entry.file_name(), kind));
+        }
+        Ok(found)
+    }
 }
 
 fn at<T>(

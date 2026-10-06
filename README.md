@@ -44,7 +44,7 @@ for skill in skills {
 - a flat, line-based `SKILL.md` parser and renderer: `parse_flat`, `render_flat`, `split_frontmatter`, and `FlatSkill::scan_document` for the scan
 - `document_digest`: the sha256 of one rendered document, for pinning an installed copy (not the same value as `BundledSkill::digest`)
 - authoring budgets: `validate_description_chars` (counted in characters) and `check_frontmatter_size` (bytes in the frontmatter block)
-- `materialize_tree`: rebuild a `<root>/<dir>/` tree from inline documents and bundle directories, skipping symlinks, with checked directory names and bounded depth
+- `materialize_tree`: rebuild a `<root>/<dir>/` tree from inline documents and bundle directories, skipping symlinks (a symlinked bundle directory is refused), with checked directory names, bounded depth, and a per-file size cap
 - `read_skill_archive` (feature `archive`): reads a `.zip`/`.skill`, `.tar`, or `.tar.gz` upload into its `SKILL.md`, root directory, and bundled files. It refuses traversal, absolute or backslash paths, symlinks and hard links, and nested archives, and checks entry-count and expanded-size caps before reading any content
 
 ## Which parser

@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use tinyskills::{
-    DiscoveryRoot, MaterializeEntry, MaterializeError, MaterializeReport, MaterializeSource,
-    SkillScope, discover, materialize_tree,
+    DiscoveryRoot, MAX_MATERIALIZE_FILE_BYTES, MaterializeEntry, MaterializeError,
+    MaterializeReport, MaterializeSource, SkillScope, discover, materialize_tree,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -180,5 +180,65 @@ fn a_duplicate_dir_name_is_refused_before_the_tree_is_touched() -> TestResult {
     let message = error.map_or_else(|e| e.to_string(), |_| String::new());
     assert!(message.contains("`same`"), "{message}");
     assert_eq!(names(&root)?, ["keep"]);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_source_directory_is_refused_and_nothing_is_copied() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let real = temp.path().join("real");
+    fs::create_dir_all(&real)?;
+    fs::write(real.join("SKILL.md"), DOC)?;
+    let link = temp.path().join("link");
+    std::os::unix::fs::symlink(&real, &link)?;
+    let root = temp.path().join("skills");
+
+    let error = materialize_tree(&root, &[bundle("demo", &link)]);
+
+    assert!(
+        matches!(&error, Err(MaterializeError::SymlinkedSource { path }) if *path == link),
+        "{error:?}"
+    );
+    assert!(!root.join("demo/SKILL.md").exists());
+    Ok(())
+}
+
+#[test]
+fn a_source_file_over_the_size_limit_is_refused() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let src = temp.path().join("bundle");
+    fs::create_dir_all(&src)?;
+    fs::write(src.join("SKILL.md"), DOC)?;
+    let big = src.join("big.bin");
+    fs::File::create(&big)?.set_len(MAX_MATERIALIZE_FILE_BYTES + 1)?;
+    let root = temp.path().join("skills");
+
+    let error = materialize_tree(&root, &[bundle("demo", &src)]);
+
+    assert!(
+        matches!(&error, Err(MaterializeError::FileTooLarge { path, max }) if *path == big && *max == MAX_MATERIALIZE_FILE_BYTES),
+        "{error:?}"
+    );
+    let message = error.map_or_else(|e| e.to_string(), |_| String::new());
+    assert!(message.contains("larger than"), "{message}");
+    Ok(())
+}
+
+#[test]
+fn a_source_file_at_the_size_limit_is_copied() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let src = temp.path().join("bundle");
+    fs::create_dir_all(&src)?;
+    fs::File::create(src.join("edge.bin"))?.set_len(MAX_MATERIALIZE_FILE_BYTES)?;
+    let root = temp.path().join("skills");
+
+    let report = materialize_tree(&root, &[bundle("demo", &src)])?;
+
+    assert_eq!(report.files, 1);
+    assert_eq!(
+        fs::metadata(root.join("demo/edge.bin"))?.len(),
+        MAX_MATERIALIZE_FILE_BYTES
+    );
     Ok(())
 }
