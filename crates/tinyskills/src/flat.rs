@@ -3,9 +3,10 @@
 //! [`parse_skill_str`](crate::parse_skill_str) reads frontmatter as YAML and is
 //! what discovery uses. A host that stores, renders, digests, and re-serves a
 //! document needs a stricter contract: the four scalars it keeps, every other
-//! line verbatim, and a body that survives byte for byte. [`parse_flat`] and
-//! [`render_flat`] are that contract, and `parse_flat → render_flat →
-//! parse_flat` is a fixed point.
+//! line kept (trimmed) for a scan, and a body that survives byte for byte.
+//! [`parse_flat`] and [`render_flat`] are that contract. `parse_flat →
+//! render_flat → parse_flat` is a fixed point on the four scalars and the
+//! body; [`FlatSkill::extra_frontmatter`] is read, never rendered.
 
 use std::fmt::Write as _;
 
@@ -18,15 +19,18 @@ pub struct FlatSkill {
     pub name: String,
     /// One-line description, from the first `description:` line.
     pub description: String,
-    /// Grouping category, from the first non-empty `category:` line.
+    /// Grouping category, from the first `category:` line; `None` when that
+    /// line is empty (a later `category:` line goes to `extra_frontmatter`).
     pub category: Option<String>,
-    /// Publisher version, from the first non-empty `version:` line.
+    /// Publisher version, from the first `version:` line; `None` when that
+    /// line is empty (a later `version:` line goes to `extra_frontmatter`).
     pub version: Option<String>,
     /// Everything after the closing fence, verbatim: line endings and any
     /// trailing newline included.
     pub body: String,
-    /// Trimmed frontmatter lines kept as no field: an unrecognised key, a
-    /// line without a `:`, or a recognised key after its first occurrence.
+    /// Frontmatter lines kept as no field, each trimmed of surrounding
+    /// whitespace and split at line endings: an unrecognised key, a line
+    /// without a `:`, or a recognised key after its first occurrence.
     ///
     /// A stored document reaches an agent as written, so these lines are as
     /// visible to it as the fields are; they are kept so a scan can see them.
@@ -77,8 +81,8 @@ fn quoted(keys: &[&'static str]) -> String {
 /// an opening `---` line and the next line that is exactly `---` (a trailing
 /// `\r` allowed). Each non-blank line is trimmed and split on its first `:`;
 /// keys match case-insensitively and the first occurrence of `name`,
-/// `description`, `category`, and `version` wins. An empty `category` or
-/// `version` reads as absent.
+/// `description`, `category`, and `version` wins, even when its value is
+/// empty. An empty `category` or `version` reads as absent.
 ///
 /// # Errors
 ///
@@ -175,7 +179,7 @@ pub fn split_frontmatter(src: &str) -> Option<(&str, &str)> {
 
     let mut offset = 0;
     for line in after_open.split_inclusive('\n') {
-        if line.trim_end_matches(['\r', '\n']) == "---" {
+        if is_fence(line) {
             let frontmatter = &after_open[..offset];
             let body = &after_open[offset + line.len()..];
             return Some((frontmatter, body));
@@ -183,6 +187,11 @@ pub fn split_frontmatter(src: &str) -> Option<(&str, &str)> {
         offset += line.len();
     }
     None
+}
+
+fn is_fence(line: &str) -> bool {
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    line.strip_suffix('\r').unwrap_or(line) == "---"
 }
 
 fn strip_fence_line(src: &str) -> Option<&str> {

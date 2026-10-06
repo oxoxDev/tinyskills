@@ -35,6 +35,16 @@ fn the_closing_fence_must_be_exactly_three_dashes() {
 }
 
 #[test]
+fn only_one_carriage_return_may_follow_the_closing_fence() {
+    assert_eq!(split_frontmatter("---\na: b\n---\r\r\nbody\n"), None);
+    assert_eq!(split_frontmatter("---\na: b\n---\r"), Some(("a: b\n", "")));
+    assert_eq!(
+        split_frontmatter("---\na: b\n---\r\r\n---\nbody"),
+        Some(("a: b\n---\r\r\n", "body"))
+    );
+}
+
+#[test]
 fn missing_keys_render_in_a_readable_list() {
     let both = FlatError::MissingKeys {
         keys: vec!["name", "description"],
