@@ -54,11 +54,12 @@ them, and they accept anything agentskills.io allows: sequences, nested
 `metadata`, `allowed-tools` lists.
 
 `parse_flat` reads one `key: value` per line and keeps only `name`,
-`description`, `category`, and `version`, holding every other line verbatim in
-`extra_frontmatter`. Use it when a host stores, digests, and re-serves the
-document itself: the body is kept byte for byte, `render_flat` is its exact
-inverse for the fields it keeps, and `render_flat` cannot be made to emit an
-extra key or close the block early. A host pinning installs with
+`description`, `category`, and `version`, holding every other line, trimmed, in
+`extra_frontmatter` so a scan can see it. Use it when a host stores, digests,
+and re-serves the document itself: the body is kept byte for byte,
+`render_flat` is its exact inverse for the fields it keeps (it never writes
+`extra_frontmatter`), and `render_flat` cannot be made to emit an extra key or
+close the block early. A host pinning installs with
 `document_digest` should digest `render_flat` output.
 
 ## Development
