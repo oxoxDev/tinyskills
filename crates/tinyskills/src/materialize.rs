@@ -81,6 +81,14 @@ pub enum MaterializeError {
         /// The limit.
         max: usize,
     },
+    /// A source directory is the destination root, inside it, or contains it.
+    #[error("{source_dir} overlaps the destination {root}")]
+    OverlappingTrees {
+        /// The destination root.
+        root: PathBuf,
+        /// The overlapping source directory.
+        source_dir: PathBuf,
+    },
     /// A source directory is itself a symlink.
     #[error("{path} is a symlink; a bundle directory must be a real directory")]
     SymlinkedSource {
@@ -137,8 +145,9 @@ pub enum MaterializeError {
 ///
 /// [`MaterializeError::UnsafeDirName`] or
 /// [`MaterializeError::DuplicateDirName`] before anything is touched;
-/// [`MaterializeError::SymlinkedSource`] when a source directory is a
-/// symlink; [`MaterializeError::FileTooLarge`] when a source file exceeds the
+/// [`MaterializeError::OverlappingTrees`] when a source directory is `root`,
+/// inside it, or contains it; [`MaterializeError::SymlinkedSource`] when a
+/// source directory is a symlink; [`MaterializeError::FileTooLarge`] when a source file exceeds the
 /// limit; [`MaterializeError::TooDeep`] when a source nests past
 /// [`MAX_MATERIALIZE_DEPTH`]; [`MaterializeError::Io`] when clearing, creating,
 /// reading, or writing fails. A failure part-way leaves the tree partially
@@ -161,6 +170,7 @@ pub fn materialize_tree(
         }
     }
 
+    reject_overlap(root, entries)?;
     let tree = DestDir::replace_root(root)?;
 
     let mut report = MaterializeReport::default();
@@ -191,6 +201,48 @@ pub fn materialize_tree(
         report.dirs.push(entry.dir_name.clone());
     }
     Ok(report)
+}
+
+fn reject_overlap(root: &Path, entries: &[MaterializeEntry]) -> Result<(), MaterializeError> {
+    let mut sources = entries
+        .iter()
+        .filter_map(|entry| match &entry.source {
+            MaterializeSource::Dir(src) => Some(src),
+            MaterializeSource::Document(_) => None,
+        })
+        .peekable();
+    if sources.peek().is_none() {
+        return Ok(());
+    }
+    let target = canonical_target(root);
+    for src in sources {
+        let Ok(resolved) = std::fs::canonicalize(src) else {
+            continue;
+        };
+        if resolved.starts_with(&target) || target.starts_with(&resolved) {
+            return Err(MaterializeError::OverlappingTrees {
+                root: root.to_path_buf(),
+                source_dir: src.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn canonical_target(root: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut existing = root;
+    while let Some((parent, name)) = parent_and_name(existing) {
+        if let Ok(base) = std::fs::canonicalize(existing) {
+            return missing
+                .iter()
+                .rev()
+                .fold(base, |path, name| path.join(name));
+        }
+        missing.push(name);
+        existing = parent;
+    }
+    root.to_path_buf()
 }
 
 fn copy_dir(

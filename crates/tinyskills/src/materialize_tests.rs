@@ -260,3 +260,36 @@ fn a_relative_root_with_parent_references_resolves_through_the_filesystem() -> T
     assert!(matches!(error, MaterializeError::Io { .. }), "{error:?}");
     Ok(())
 }
+
+#[test]
+fn a_source_overlapping_the_destination_is_refused_before_anything_is_deleted() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("skills");
+    std::fs::create_dir_all(root.join("inner"))?;
+    std::fs::write(root.join("inner/SKILL.md"), "keep")?;
+    let bundle = |dir: &Path| MaterializeEntry {
+        dir_name: "demo".to_string(),
+        source: MaterializeSource::Dir(dir.to_path_buf()),
+    };
+
+    for src in [root.join("inner"), root.clone(), temp.path().to_path_buf()] {
+        let error = refused(&root, &[bundle(&src)])?;
+        assert!(
+            matches!(&error, MaterializeError::OverlappingTrees { source_dir, .. } if *source_dir == src),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("overlaps"));
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("inner/SKILL.md"))?,
+        "keep"
+    );
+
+    let new_root = root.join("inner/not/yet/created");
+    let error = refused(&new_root, &[bundle(&root.join("inner"))])?;
+    assert!(
+        matches!(error, MaterializeError::OverlappingTrees { .. }),
+        "{error:?}"
+    );
+    Ok(())
+}
