@@ -131,6 +131,24 @@ fn symlinks_inside_a_bundle_are_skipped_not_followed() -> TestResult {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn non_regular_files_inside_a_bundle_are_not_copied() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let src = temp.path().join("bundle");
+    fs::create_dir_all(&src)?;
+    fs::write(src.join("SKILL.md"), DOC)?;
+    let _listener = std::os::unix::net::UnixListener::bind(src.join("agent.sock"))?;
+    let root = temp.path().join("skills");
+
+    let report = materialize_tree(&root, &[bundle("demo", &src)])?;
+
+    assert_eq!(report.files, 1);
+    assert_eq!(report.skipped_symlinks, 0);
+    assert_eq!(names(&root.join("demo"))?, ["SKILL.md"]);
+    Ok(())
+}
+
 #[test]
 fn an_unsafe_dir_name_is_refused_before_the_tree_is_touched() -> TestResult {
     let temp = tempfile::tempdir()?;
