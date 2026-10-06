@@ -219,8 +219,9 @@ fn copy_dir(
                 copy_dir(&child, &from, &child_out, &to, depth + 1, report)?;
             }
             EntryKind::File => {
-                copy_file(source, &name, &from, out, &to)?;
-                report.files += 1;
+                if copy_file(source, &name, &from, out, &to)? {
+                    report.files += 1;
+                }
             }
             EntryKind::Other => {}
         }
@@ -234,11 +235,11 @@ fn copy_file(
     from: &Path,
     out: &DestDir,
     to: &Path,
-) -> Result<(), MaterializeError> {
+) -> Result<bool, MaterializeError> {
     let file = at("copying", from, source.open_file(name))?;
     let metadata = at("copying", from, file.metadata())?;
     if !metadata.is_file() {
-        return Ok(());
+        return Ok(false);
     }
     let too_large = || MaterializeError::FileTooLarge {
         path: from.to_path_buf(),
@@ -256,7 +257,7 @@ fn copy_file(
     if copied > MAX_MATERIALIZE_FILE_BYTES {
         return Err(too_large());
     }
-    Ok(())
+    Ok(true)
 }
 
 enum EntryKind {
