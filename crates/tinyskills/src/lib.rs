@@ -16,6 +16,7 @@ mod discovery;
 mod document;
 mod flat;
 mod install;
+mod materialize;
 mod model;
 mod remove;
 mod resource;
@@ -54,6 +55,10 @@ pub use install::{
     is_loopback_http_url, is_private_or_local_host, normalize_install_url, redact_url,
     validate_fetched_document, validate_install_url, validate_resolved_host,
     write_installed_document,
+};
+pub use materialize::{
+    MAX_MATERIALIZE_DEPTH, MaterializeEntry, MaterializeError, MaterializeReport,
+    MaterializeSource, materialize_tree,
 };
 pub use model::{
     MAX_DESCRIPTION_LEN, MAX_DOCUMENT_BYTES, MAX_NAME_LEN, MAX_RESOURCE_BYTES, RESOURCE_DIRS,
