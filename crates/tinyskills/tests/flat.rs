@@ -95,7 +95,45 @@ fn an_empty_category_or_version_does_not_claim_its_key() -> Result<(), FlatError
     )?;
     assert_eq!(doc.version.as_deref(), Some("2"));
     assert_eq!(doc.category.as_deref(), Some("ops"));
-    assert_eq!(doc.extra_frontmatter, ["category: later"]);
+    assert_eq!(
+        doc.extra_frontmatter,
+        ["version:", "category:", "category: later"]
+    );
+    let rendered = render_flat(&doc);
+    assert_eq!(parse_flat(&rendered)?, doc);
+    Ok(())
+}
+
+#[test]
+fn empty_optional_lines_are_kept_as_extras_and_survive_a_render() -> Result<(), FlatError> {
+    let doc = parse_flat("---\nname: N\ndescription: D\ncategory:\nversion:\n---\nb")?;
+    assert_eq!(
+        (doc.category.as_deref(), doc.version.as_deref()),
+        (None, None)
+    );
+    assert_eq!(doc.extra_frontmatter, ["category:", "version:"]);
+    let rendered = render_flat(&doc);
+    assert_eq!(
+        rendered,
+        "---\nname: N\ndescription: D\ncategory:\nversion:\n---\nb"
+    );
+    assert_eq!(parse_flat(&rendered)?, doc);
+    Ok(())
+}
+
+#[test]
+fn render_omits_optional_scalars_that_are_empty_after_normalising() -> Result<(), FlatError> {
+    let doc = FlatSkill {
+        name: "N".to_string(),
+        description: "D".to_string(),
+        category: Some(String::new()),
+        version: Some(" \r\n ".to_string()),
+        ..FlatSkill::default()
+    };
+    let rendered = render_flat(&doc);
+    assert_eq!(rendered, "---\nname: N\ndescription: D\n---\n");
+    let reparsed = parse_flat(&rendered)?;
+    assert_eq!(render_flat(&reparsed), rendered);
     Ok(())
 }
 

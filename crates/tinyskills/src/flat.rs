@@ -4,8 +4,10 @@
 //! what discovery uses. A host that stores, renders, digests, and re-serves a
 //! document needs a stricter contract: the four scalars it keeps, every other
 //! line kept (trimmed) for a scan, and a body that survives byte for byte.
-//! [`parse_flat`] and [`render_flat`] are that contract, and `parse_flat →
-//! render_flat → parse_flat` is a fixed point.
+//! [`parse_flat`] and [`render_flat`] are that contract. `parse_flat →
+//! render_flat → parse_flat` is a fixed point on the parsed [`FlatSkill`]; the
+//! rendered text is canonical, so blank frontmatter lines, key case, key order,
+//! and whitespace around a line are not reproduced.
 
 use std::fmt::Write as _;
 
@@ -27,8 +29,9 @@ pub struct FlatSkill {
     pub body: String,
     /// Frontmatter lines kept as no field, each trimmed of surrounding
     /// whitespace and split at line endings: an unrecognised key, a line
-    /// without a `:`, or a recognised key after its first non-empty
-    /// occurrence. [`render_flat`] writes them back after the four fields.
+    /// without a `:`, an empty `category:` or `version:` line, or a recognised
+    /// key after its first non-empty occurrence. [`render_flat`] writes them
+    /// back after the four fields.
     ///
     /// A stored document reaches an agent as written, so these lines are as
     /// visible to it as the fields are; they are kept so a scan can see them.
@@ -80,8 +83,9 @@ fn quoted(keys: &[&'static str]) -> String {
 /// `\r` allowed). Each non-blank line is trimmed and split on its first `:`;
 /// keys match case-insensitively and the first occurrence of `name`,
 /// `description`, `category`, and `version` wins; an empty `category` or
-/// `version` line does not claim its key, so the first non-empty one wins and
-/// a document with none reads as absent.
+/// `version` line does not claim its key (it is kept as an extra line), so the
+/// first non-empty one wins and a document with none reads as absent. Blank
+/// lines are skipped.
 ///
 /// # Errors
 ///
@@ -109,8 +113,8 @@ pub fn parse_flat(src: &str) -> Result<FlatSkill, FlatError> {
         match key.trim().to_ascii_lowercase().as_str() {
             "name" if name.is_none() => name = Some(value),
             "description" if description.is_none() => description = Some(value),
-            "category" if unclaimed(category.as_deref()) => category = Some(value),
-            "version" if unclaimed(version.as_deref()) => version = Some(value),
+            "category" if category.is_none() && !value.is_empty() => category = Some(value),
+            "version" if version.is_none() && !value.is_empty() => version = Some(value),
             _ => extra_frontmatter.push(line.to_string()),
         }
     }
@@ -133,8 +137,8 @@ pub fn parse_flat(src: &str) -> Result<FlatSkill, FlatError> {
     Ok(FlatSkill {
         name,
         description,
-        category: category.filter(|value| !value.is_empty()),
-        version: version.filter(|value| !value.is_empty()),
+        category,
+        version,
         body: body.to_string(),
         extra_frontmatter,
     })
@@ -146,10 +150,11 @@ pub fn parse_flat(src: &str) -> Result<FlatSkill, FlatError> {
 /// verbatim.
 ///
 /// Each scalar and extra line has `\n` and `\r` replaced by spaces and is then
-/// trimmed, so a value can neither add a key nor close the block early. An
-/// extra line that is blank, is a bare `---`, or names a recognised key that
-/// is not already written above it is left out, because it would claim that
-/// key or end the block when parsed again. The output is the canonical form,
+/// trimmed, so a value can neither add a key nor close the block early. A
+/// `category` or `version` that is empty after that is not written. An
+/// extra line that is blank, is a bare `---`, or gives a value to a recognised
+/// key that is not already written above it is left out, because it would
+/// claim that key or end the block when parsed again. The output is the canonical form,
 /// not a copy of any original source.
 #[must_use]
 pub fn render_flat(doc: &FlatSkill) -> String {
@@ -157,11 +162,11 @@ pub fn render_flat(doc: &FlatSkill) -> String {
     let mut out = String::from("---\n");
     let _ = writeln!(out, "name: {}", one_line(&doc.name));
     let _ = writeln!(out, "description: {}", one_line(&doc.description));
-    if let Some(category) = &doc.category {
-        let _ = writeln!(out, "category: {}", one_line(category));
-    }
-    if let Some(version) = &doc.version {
-        let _ = writeln!(out, "version: {}", one_line(version));
+    for (key, value) in [("category", &doc.category), ("version", &doc.version)] {
+        let value = value.as_deref().map(one_line).unwrap_or_default();
+        if !value.is_empty() {
+            let _ = writeln!(out, "{key}: {value}");
+        }
     }
     for extra in &doc.extra_frontmatter {
         let line = one_line(extra);
@@ -175,23 +180,20 @@ pub fn render_flat(doc: &FlatSkill) -> String {
     out
 }
 
-fn unclaimed(slot: Option<&str>) -> bool {
-    slot.is_none_or(str::is_empty)
-}
-
 fn renders_as_extra(line: &str, doc: &FlatSkill) -> bool {
     if line.is_empty() || line == "---" {
         return false;
     }
-    let Some((key, _)) = line.split_once(':') else {
+    let Some((key, value)) = line.split_once(':') else {
         return true;
     };
     let written = |value: Option<&str>| value.is_some_and(|value| !value.trim().is_empty());
+    let empty = value.trim().is_empty();
     match key.trim().to_ascii_lowercase().as_str() {
         "name" => written(Some(&doc.name)),
         "description" => written(Some(&doc.description)),
-        "category" => written(doc.category.as_deref()),
-        "version" => written(doc.version.as_deref()),
+        "category" => empty || written(doc.category.as_deref()),
+        "version" => empty || written(doc.version.as_deref()),
         _ => true,
     }
 }
