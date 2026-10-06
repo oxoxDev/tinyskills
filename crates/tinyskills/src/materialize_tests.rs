@@ -53,11 +53,18 @@ fn a_source_nested_past_the_limit_is_refused() -> TestResult {
         source: MaterializeSource::Dir(src),
     };
 
-    let error = refused(&temp.path().join("out"), &[entry])?;
+    let out = temp.path().join("out");
+    let error = refused(&out, &[entry])?;
     assert!(
         matches!(&error, MaterializeError::TooDeep { path, max } if *path == deep && *max == MAX_MATERIALIZE_DEPTH),
         "{error:?}"
     );
+    let mut created = out.join("deep");
+    for level in 0..MAX_MATERIALIZE_DEPTH {
+        created = created.join(format!("d{level}"));
+    }
+    assert!(created.is_dir());
+    assert!(!created.join(format!("d{MAX_MATERIALIZE_DEPTH}")).exists());
     assert!(error.to_string().contains("directories deep"));
     Ok(())
 }
@@ -258,6 +265,7 @@ fn a_relative_root_with_parent_references_resolves_through_the_filesystem() -> T
 
     let error = refused(&nested.join("gone/../tree"), &[])?;
     assert!(matches!(error, MaterializeError::Io { .. }), "{error:?}");
+    assert!(!nested.join("gone").exists());
     Ok(())
 }
 

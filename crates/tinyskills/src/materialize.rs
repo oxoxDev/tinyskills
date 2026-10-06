@@ -253,12 +253,6 @@ fn copy_dir(
     depth: usize,
     report: &mut MaterializeReport,
 ) -> Result<(), MaterializeError> {
-    if depth > MAX_MATERIALIZE_DEPTH {
-        return Err(MaterializeError::TooDeep {
-            path: src.to_path_buf(),
-            max: MAX_MATERIALIZE_DEPTH,
-        });
-    }
     for entry in at("reading", src, source.entries())? {
         let (name, kind) = at("reading", src, entry)?;
         let from = src.join(&name);
@@ -266,6 +260,12 @@ fn copy_dir(
         match kind {
             EntryKind::Symlink => report.skipped_symlinks += 1,
             EntryKind::Dir => {
+                if depth >= MAX_MATERIALIZE_DEPTH {
+                    return Err(MaterializeError::TooDeep {
+                        path: from,
+                        max: MAX_MATERIALIZE_DEPTH,
+                    });
+                }
                 let child = at("reading", &from, source.open_dir(&name))?;
                 let child_out = at("creating", &to, out.create_dir(&name))?;
                 copy_dir(&child, &from, &child_out, &to, depth + 1, report)?;
