@@ -89,11 +89,22 @@ fn a_repeated_recognised_key_keeps_its_first_value_and_the_rest_are_extra() -> R
 }
 
 #[test]
-fn an_empty_first_value_still_claims_its_key() -> Result<(), FlatError> {
-    let doc = parse_flat("---\nversion:\nversion: 2\nname: N\ndescription: D\n---\n")?;
-    assert_eq!(doc.version, None);
-    assert_eq!(doc.extra_frontmatter, ["version: 2"]);
+fn an_empty_category_or_version_does_not_claim_its_key() -> Result<(), FlatError> {
+    let doc = parse_flat(
+        "---\nversion:\nversion: 2\ncategory:\ncategory: ops\ncategory: later\nname: N\ndescription: D\n---\n",
+    )?;
+    assert_eq!(doc.version.as_deref(), Some("2"));
+    assert_eq!(doc.category.as_deref(), Some("ops"));
+    assert_eq!(doc.extra_frontmatter, ["category: later"]);
     Ok(())
+}
+
+#[test]
+fn an_empty_first_name_still_claims_its_key() {
+    assert_eq!(
+        parse_flat("---\nname:\nname: N\ndescription: D\n---\n"),
+        Err(FlatError::MissingKeys { keys: vec!["name"] })
+    );
 }
 
 #[test]
@@ -159,12 +170,45 @@ fn render_round_trips_through_the_parser() -> Result<(), FlatError> {
 }
 
 #[test]
-fn render_drops_extra_frontmatter_lines() -> Result<(), FlatError> {
-    let doc = parse_flat("---\nname: N\nowner: eve\ndescription: D\n---\nbody\n")?;
+fn render_writes_extra_frontmatter_after_the_fields_in_stored_order() -> Result<(), FlatError> {
+    let src = "---\nname: N\nowner: eve\ndescription: D\nloose line\nname: Other\nowner: bob\n---\nbody\n";
+    let doc = parse_flat(src)?;
+    let rendered = render_flat(&doc);
     assert_eq!(
-        render_flat(&doc),
-        "---\nname: N\ndescription: D\n---\nbody\n"
+        rendered,
+        "---\nname: N\ndescription: D\nowner: eve\nloose line\nname: Other\nowner: bob\n---\nbody\n"
     );
+    assert_eq!(parse_flat(&rendered)?, doc);
+    assert_eq!(render_flat(&parse_flat(&rendered)?), rendered);
+    Ok(())
+}
+
+#[test]
+fn render_leaves_out_extra_lines_that_would_claim_a_key_or_close_the_block() -> Result<(), FlatError>
+{
+    let doc = FlatSkill {
+        name: "N".to_string(),
+        description: "D".to_string(),
+        extra_frontmatter: [
+            "category: sneaky",
+            "version: 9",
+            "---",
+            "  ",
+            "name: dup",
+            "ok: kept\n---\ninjected: yes",
+        ]
+        .map(String::from)
+        .to_vec(),
+        ..FlatSkill::default()
+    };
+    let rendered = render_flat(&doc);
+    assert_eq!(
+        rendered,
+        "---\nname: N\ndescription: D\nname: dup\nok: kept --- injected: yes\n---\n"
+    );
+    let parsed = parse_flat(&rendered)?;
+    assert_eq!(parsed.category, None);
+    assert_eq!(parsed.version, None);
     Ok(())
 }
 
