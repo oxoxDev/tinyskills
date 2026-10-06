@@ -55,8 +55,8 @@ pub struct SlugRules<'a> {
     /// How non-alphanumeric characters are treated. Defaults to
     /// [`PunctuationRule::Drop`].
     pub punctuation: PunctuationRule,
-    /// The slug [`slugify_with`] returns, as given, for a name with nothing
-    /// alphanumeric in it. `None` by default, which refuses such a name.
+    /// The slug [`slugify_with`] returns for a name with nothing
+    /// alphanumeric in it, once it passes [`validate_slug`]. `None` by default, which refuses such a name.
     pub fallback: Option<&'a str>,
 }
 
@@ -153,7 +153,8 @@ pub enum SlugError {
 /// `max_chars` first and then loses any leading and trailing `-`.
 ///
 /// A name with nothing alphanumeric in it yields [`SlugRules::fallback`]
-/// verbatim when one is set. A derived slug that lands on a reserved name
+/// when one is set, after the fallback passes [`validate_slug`] under the same
+/// rules. A derived slug that lands on a reserved name
 /// gets `-2` appended (or the next free number) rather than being refused:
 /// deriving is authoring, and an author should not have to rename a skill to
 /// dodge a route they cannot see. [`validate_slug`] is where a reserved slug
@@ -162,15 +163,19 @@ pub enum SlugError {
 /// # Errors
 ///
 /// [`AuthoringError::NoSlug`] when nothing alphanumeric remains and there is
-/// no fallback, and [`AuthoringError::SlugTooLong`] when the slug is too long
-/// and `truncate` is off.
+/// no fallback, [`AuthoringError::SlugTooLong`] when the slug is too long and
+/// `truncate` is off, and [`AuthoringError::InvalidSlug`] or
+/// [`AuthoringError::SlugTooLong`] when the fallback itself breaks
+/// [`validate_slug`].
 pub fn slugify_with(name: &str, rules: &SlugRules<'_>) -> Result<String, AuthoringError> {
     let derived = match rules.punctuation {
         PunctuationRule::Drop => slug_from_name(name).and_then(|slug| bound(slug, rules)),
         PunctuationRule::Separator => separated_slug(name, rules),
     };
     let mut slug = match (derived, rules.fallback) {
-        (Err(AuthoringError::NoSlug { .. }), Some(fallback)) => return Ok(fallback.to_owned()),
+        (Err(AuthoringError::NoSlug { .. }), Some(fallback)) => {
+            return checked_fallback(fallback, rules);
+        }
         (derived, _) => derived?,
     };
     if rules.reserved.contains(&slug.as_str()) {
@@ -191,6 +196,19 @@ pub fn slugify_with(name: &str, rules: &SlugRules<'_>) -> Result<String, Authori
         }
     }
     Ok(slug)
+}
+
+fn checked_fallback(fallback: &str, rules: &SlugRules<'_>) -> Result<String, AuthoringError> {
+    match validate_slug(fallback, rules) {
+        Ok(()) => Ok(fallback.to_owned()),
+        Err(SlugError::TooLong { max, .. }) => Err(AuthoringError::SlugTooLong {
+            slug: fallback.to_owned(),
+            max,
+        }),
+        Err(_) => Err(AuthoringError::InvalidSlug {
+            slug: fallback.to_owned(),
+        }),
+    }
 }
 
 fn bound(slug: String, rules: &SlugRules<'_>) -> Result<String, AuthoringError> {

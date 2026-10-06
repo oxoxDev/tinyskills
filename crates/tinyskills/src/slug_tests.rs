@@ -148,6 +148,27 @@ fn a_fallback_replaces_only_the_no_slug_refusal() {
 }
 
 #[test]
+fn a_fallback_that_breaks_the_slug_rules_is_refused() {
+    let invalid = |fallback| {
+        matches!(
+            slugify_with("!!!", &SlugRules::new().fallback(fallback)),
+            Err(AuthoringError::InvalidSlug { slug }) if slug == fallback
+        )
+    };
+    assert!(invalid("../upload"));
+    assert!(invalid(""));
+    assert!(invalid("Has Space"));
+    assert!(matches!(
+        slugify_with("!!!", &SlugRules::new().max_chars(3).fallback("untitled")),
+        Err(AuthoringError::SlugTooLong { slug, max: 3 }) if slug == "untitled"
+    ));
+    assert!(matches!(
+        slugify_with("!!!", &SlugRules::new().reserved(&["skill"]).fallback("skill")),
+        Err(AuthoringError::InvalidSlug { slug }) if slug == "skill"
+    ));
+}
+
+#[test]
 fn separator_without_truncation_refuses_a_long_name() {
     let rules = SlugRules::new()
         .max_chars(4)
