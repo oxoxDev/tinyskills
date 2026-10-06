@@ -172,3 +172,25 @@ fn entries_are_classified_without_following_links() -> TestResult {
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn destination_entries_never_follow_a_symlink() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(&outside)?;
+    let root = temp.path().join("root");
+    std::fs::create_dir_all(&root)?;
+    std::os::unix::fs::symlink(&outside, root.join("dir"))?;
+    std::os::unix::fs::symlink(outside.join("target.txt"), root.join("file"))?;
+    let tree = DestDir::open_root(&root)?;
+
+    assert!(tree.create_dir(OsStr::new("dir")).is_err());
+    assert!(tree.create_file(OsStr::new("file")).is_err());
+    assert!(!outside.join("target.txt").exists());
+
+    let link = temp.path().join("link");
+    std::os::unix::fs::symlink(&root, &link)?;
+    assert!(DestDir::open_root(&link).is_err());
+    Ok(())
+}

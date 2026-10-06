@@ -7,8 +7,8 @@
 //! set disappears from disk.
 
 use std::collections::BTreeSet;
-use std::ffi::OsString;
-use std::fs::{File, OpenOptions};
+use std::ffi::{OsStr, OsString};
+use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -117,10 +117,12 @@ pub enum MaterializeError {
 /// Source files larger than [`MAX_MATERIALIZE_FILE_BYTES`] are refused. On
 /// Unix each source entry is opened relative to its parent directory without
 /// following symlinks, so replacing an entry with a symlink while the copy
-/// runs fails the copy rather than reading through the link. Destination
-/// entries are created exclusively and never follow a symlink in the final
-/// path component. Neither guarantee covers the ancestors of `root` or of a
-/// source directory, nor a non-Unix platform: callers must own the
+/// runs fails the copy rather than reading through the link. The recreated
+/// `root` is opened once without following symlinks and every destination
+/// entry is created relative to that handle, exclusively, so replacing `root`
+/// or a destination directory with a symlink fails the call rather than
+/// writing through it. Neither guarantee covers the ancestors of `root` or of
+/// a source directory, nor a non-Unix platform: callers must own the
 /// destination's parent directory and must not copy a source tree an
 /// untrusted party can modify concurrently.
 ///
@@ -154,6 +156,7 @@ pub fn materialize_tree(
 
     clear(root)?;
     at("creating skill tree", root, std::fs::create_dir_all(root))?;
+    let tree = at("creating skill tree", root, DestDir::open_root(root))?;
 
     let mut report = MaterializeReport::default();
     for entry in entries {
@@ -161,13 +164,22 @@ pub fn materialize_tree(
         match &entry.source {
             MaterializeSource::Dir(src) => {
                 let source = SourceDir::open_root(src)?;
-                copy_dir(&source, src, &dest, 0, &mut report)?;
+                let out = at(
+                    "creating",
+                    &dest,
+                    tree.create_dir(OsStr::new(&entry.dir_name)),
+                )?;
+                copy_dir(&source, src, &out, &dest, 0, &mut report)?;
             }
             MaterializeSource::Document(document) => {
-                at("creating skill dir", &dest, std::fs::create_dir(&dest))?;
+                let out = at(
+                    "creating skill dir",
+                    &dest,
+                    tree.create_dir(OsStr::new(&entry.dir_name)),
+                )?;
                 let file = dest.join(SKILL_MD);
-                let mut out = create_file(&file)?;
-                at("writing", &file, out.write_all(document.as_bytes()))?;
+                let mut handle = at("creating", &file, out.create_file(OsStr::new(SKILL_MD)))?;
+                at("writing", &file, handle.write_all(document.as_bytes()))?;
                 report.files += 1;
             }
         }
@@ -190,6 +202,7 @@ fn clear(root: &Path) -> Result<(), MaterializeError> {
 fn copy_dir(
     source: &SourceDir,
     src: &Path,
+    out: &DestDir,
     dest: &Path,
     depth: usize,
     report: &mut MaterializeReport,
@@ -200,7 +213,6 @@ fn copy_dir(
             max: MAX_MATERIALIZE_DEPTH,
         });
     }
-    at("creating", dest, std::fs::create_dir(dest))?;
     for (name, kind) in at("reading", src, source.entries())? {
         let from = src.join(&name);
         let to = dest.join(&name);
@@ -208,10 +220,11 @@ fn copy_dir(
             EntryKind::Symlink => report.skipped_symlinks += 1,
             EntryKind::Dir => {
                 let child = at("reading", &from, source.open_dir(&name))?;
-                copy_dir(&child, &from, &to, depth + 1, report)?;
+                let child_out = at("creating", &to, out.create_dir(&name))?;
+                copy_dir(&child, &from, &child_out, &to, depth + 1, report)?;
             }
             EntryKind::File => {
-                copy_file(source, &name, &from, &to)?;
+                copy_file(source, &name, &from, out, &to)?;
                 report.files += 1;
             }
             EntryKind::Other => {}
@@ -224,6 +237,7 @@ fn copy_file(
     source: &SourceDir,
     name: &OsString,
     from: &Path,
+    out: &DestDir,
     to: &Path,
 ) -> Result<(), MaterializeError> {
     let file = at("copying", from, source.open_file(name))?;
@@ -238,24 +252,16 @@ fn copy_file(
     if metadata.len() > MAX_MATERIALIZE_FILE_BYTES {
         return Err(too_large());
     }
-    let mut out = create_file(to)?;
+    let mut handle = at("creating", to, out.create_file(name))?;
     let copied = at(
         "copying",
         from,
-        std::io::copy(&mut file.take(MAX_MATERIALIZE_FILE_BYTES + 1), &mut out),
+        std::io::copy(&mut file.take(MAX_MATERIALIZE_FILE_BYTES + 1), &mut handle),
     )?;
     if copied > MAX_MATERIALIZE_FILE_BYTES {
         return Err(too_large());
     }
     Ok(())
-}
-
-fn create_file(path: &Path) -> Result<File, MaterializeError> {
-    at(
-        "creating",
-        path,
-        OpenOptions::new().write(true).create_new(true).open(path),
-    )
 }
 
 enum EntryKind {
@@ -319,6 +325,34 @@ impl SourceDir {
             found.push((name, kind));
         }
         Ok(found)
+    }
+}
+
+#[cfg(unix)]
+struct DestDir(File);
+
+#[cfg(unix)]
+impl DestDir {
+    fn open_root(path: &Path) -> std::io::Result<Self> {
+        Ok(Self(File::from(open_nofollow_dir(rustix::fs::CWD, path)?)))
+    }
+
+    fn create_dir(&self, name: &OsStr) -> std::io::Result<Self> {
+        use rustix::fs::{Mode, mkdirat};
+        mkdirat(&self.0, name, Mode::from_bits_truncate(0o777))?;
+        Ok(Self(File::from(open_nofollow_dir(&self.0, name)?)))
+    }
+
+    fn create_file(&self, name: &OsStr) -> std::io::Result<File> {
+        use rustix::fs::{Mode, OFlags, openat};
+        let flags =
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        Ok(File::from(openat(
+            &self.0,
+            name,
+            flags,
+            Mode::from_bits_truncate(0o666),
+        )?))
     }
 }
 
@@ -397,6 +431,29 @@ fn io(context: &'static str, path: &Path, source: std::io::Error) -> Materialize
         context,
         path: path.to_path_buf(),
         source,
+    }
+}
+
+#[cfg(not(unix))]
+struct DestDir(PathBuf);
+
+#[cfg(not(unix))]
+impl DestDir {
+    fn open_root(path: &Path) -> std::io::Result<Self> {
+        Ok(Self(path.to_path_buf()))
+    }
+
+    fn create_dir(&self, name: &OsStr) -> std::io::Result<Self> {
+        let path = self.0.join(name);
+        std::fs::create_dir(&path)?;
+        Ok(Self(path))
+    }
+
+    fn create_file(&self, name: &OsStr) -> std::io::Result<File> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.0.join(name))
     }
 }
 
