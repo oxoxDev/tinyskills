@@ -88,9 +88,11 @@ dependencies once in the root workspace manifest, enable only required
 features, and document any substantial new dependency. Keep `Cargo.lock`
 committed.
 
-`cap-std` and `cap-fs-ext` (Bytecode Alliance) back `materialize_tree`: every
-source and destination operation goes through an open directory handle that
-never follows a symlink, on Unix and Windows alike, with no `unsafe` here.
+`cap-std` and `cap-fs-ext` (Bytecode Alliance) back `materialize_tree`: the
+ancestors of the supplied paths are canonicalized once, then every directory
+from the filesystem root down is opened through a handle that never follows a
+symlink, on Unix and Windows alike, with no `unsafe` here. The canonicalization
+itself and an ancestor renamed to another real directory are not covered.
 
 ## Documentation
 

@@ -44,7 +44,7 @@ for skill in skills {
 - a flat, line-based `SKILL.md` parser and renderer: `parse_flat`, `render_flat`, `split_frontmatter`, and `FlatSkill::scan_document` for the scan
 - `document_digest`: the sha256 of one rendered document, for pinning an installed copy (not the same value as `BundledSkill::digest`)
 - authoring budgets: `validate_description_chars` (counted in characters) and `check_frontmatter_size` (bytes in the frontmatter block)
-- `materialize_tree`: rebuild a `<root>/<dir>/` tree from inline documents and bundle directories, skipping symlinks (a symlinked bundle directory is refused), with checked directory names, bounded depth, and a per-file size cap
+- `materialize_tree`: rebuild a `<root>/<dir>/` tree from inline documents and bundle directories, skipping symlinks (a symlinked bundle directory is refused), with checked directory names, bounded depth, a per-file size cap, and no-follow directory handles below the canonicalized ancestors of the root and each bundle directory
 - `read_skill_archive` (feature `archive`): reads a `.zip`/`.skill`, `.tar`, or `.tar.gz` upload into its `SKILL.md`, root directory, and bundled files. It refuses traversal, absolute or backslash paths, symlinks and hard links, and nested archives, and checks entry-count and expanded-size caps before reading any content
 
 ## Which parser
@@ -56,12 +56,15 @@ them, and they accept anything agentskills.io allows: sequences, nested
 `parse_flat` reads one `key: value` per line and keeps only `name`,
 `description`, `category`, and `version`, holding every other line, trimmed, in
 `extra_frontmatter` so a scan can see it. The first non-empty `category` or
-`version` wins. Use it when a host stores, digests, and re-serves the document
-itself: the body is kept byte for byte, `render_flat` writes the four fields
-and then the extra lines in stored order, so `parse_flat → render_flat →
-parse_flat` is a fixed point, and `render_flat` cannot be made to emit a
-second claim on a field or close the block early. A host pinning installs with
-`document_digest` should digest `render_flat` output.
+`version` wins; an empty one is kept as an extra line. Blank frontmatter lines
+are discarded. Use it when a host stores, digests, and re-serves the document
+itself: the body is kept byte for byte, and `render_flat` writes the four
+fields and then the extra lines in stored order. `parse_flat → render_flat →
+parse_flat` is a fixed point on the parsed value, not on the text: the
+rendered document is canonical, so blank lines, key case, key order, and
+whitespace around a line are not reproduced. `render_flat` cannot be made to
+emit a second claim on a field or close the block early. A host pinning
+installs with `document_digest` should digest `render_flat` output.
 
 ## Development
 
