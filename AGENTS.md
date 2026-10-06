@@ -88,6 +88,10 @@ dependencies once in the root workspace manifest, enable only required
 features, and document any substantial new dependency. Keep `Cargo.lock`
 committed.
 
+`cap-std` and `cap-fs-ext` (Bytecode Alliance) back `materialize_tree`: every
+source and destination operation goes through an open directory handle that
+never follows a symlink, on Unix and Windows alike, with no `unsafe` here.
+
 ## Documentation
 
 Update `README.md`, rustdoc, and tests with behavior or public API changes.
@@ -130,7 +134,3 @@ irreversible decision or genuine product-policy fork blocks progress.
 - Integration tests stay in the crate's `tests/` directory.
 - OpenHuman's `scripts/externalize-inline-tests.mjs <repo-root> --write` moves
   inline test modules out mechanically; without `--write` it only reports.
-
-`cap-std` and `cap-fs-ext` (Bytecode Alliance) back `materialize_tree`: every
-source and destination operation goes through an open directory handle that
-never follows a symlink, on Unix and Windows alike, with no `unsafe` here.
