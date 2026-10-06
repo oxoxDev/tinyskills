@@ -436,6 +436,12 @@ fn open_anchored(path: &Path, create: bool) -> std::io::Result<Dir> {
             Ok(base) => break base,
             Err(error) if create && error.kind() == std::io::ErrorKind::NotFound => {
                 let (parent, name) = parent_and_name(&existing).ok_or_else(invalid_root)?;
+                if !matches!(
+                    Path::new(name).components().next(),
+                    Some(Component::Normal(_))
+                ) {
+                    return Err(invalid_root());
+                }
                 missing.push(name.to_owned());
                 existing = parent.to_path_buf();
             }
