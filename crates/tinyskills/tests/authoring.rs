@@ -3,9 +3,10 @@
 use std::fs;
 
 use tinyskills::{
-    AuthoringError, BundleDocument, BundleSpec, MAX_NAME_LEN, ScaffoldOptions, SlugError,
-    SlugRules, parse_skill_str, render_workflow_frontmatter, render_workflow_md, scaffold_bundle,
-    slugify, slugify_with, validate_description, validate_display_name, validate_slug, yaml_scalar,
+    AuthoringError, BundleDocument, BundleSpec, MAX_NAME_LEN, PunctuationRule, ScaffoldOptions,
+    SlugError, SlugRules, parse_skill_str, render_workflow_frontmatter, render_workflow_md,
+    scaffold_bundle, slugify, slugify_with, validate_description, validate_display_name,
+    validate_slug, yaml_scalar,
 };
 
 fn spec(slug: &str) -> BundleSpec {
@@ -293,11 +294,10 @@ fn scaffold_refuses_a_symlinked_bundle_dir() -> Result<(), Box<dyn std::error::E
 // --- product bounds on slugs ---
 
 /// A host whose skill routes sit beside static ones, with a tighter cap.
-const PRODUCT: SlugRules<'static> = SlugRules {
-    max_chars: 12,
-    reserved: &["draft", "upload"],
-    truncate: true,
-};
+const PRODUCT: SlugRules<'static> = SlugRules::new()
+    .max_chars(12)
+    .reserved(&["draft", "upload"])
+    .truncate(true);
 
 #[test]
 fn default_slug_rules_match_slugify() -> Result<(), AuthoringError> {
@@ -332,6 +332,33 @@ fn a_truncating_rule_cuts_at_the_cap_without_a_trailing_dash() -> Result<(), Aut
 fn slugify_steps_around_a_reserved_slug() -> Result<(), AuthoringError> {
     assert_eq!(slugify_with("Draft", &PRODUCT)?, "draft-2");
     assert_eq!(slugify_with("Drafting", &PRODUCT)?, "drafting");
+    Ok(())
+}
+
+/// A host that folds every punctuation run to a separator and never refuses a
+/// name: what it derives always passes its own [`validate_slug`].
+#[test]
+fn separator_rules_with_a_fallback_always_yield_a_valid_slug() -> Result<(), AuthoringError> {
+    const SEPARATED: SlugRules<'static> = SlugRules::new()
+        .reserved(&["draft", "upload", "registry"])
+        .truncate(true)
+        .punctuation(PunctuationRule::Separator)
+        .fallback("skill");
+
+    assert_eq!(
+        slugify_with("Q3 board-pack (v2)", &SEPARATED)?,
+        "q3-board-pack-v2"
+    );
+    assert_eq!(slugify_with("Registry", &SEPARATED)?, "registry-2");
+    assert_eq!(slugify_with("???", &SEPARATED)?, "skill");
+    for name in ["x".repeat(200), " a ".repeat(40), "Upload".to_owned()] {
+        let slug = slugify_with(&name, &SEPARATED)?;
+        assert_eq!(
+            validate_slug(&slug, &SEPARATED),
+            Ok(()),
+            "{name:?} -> {slug:?}"
+        );
+    }
     Ok(())
 }
 

@@ -10,8 +10,40 @@
 use crate::authoring::{AuthoringError, slug_from_name};
 use crate::model::MAX_NAME_LEN;
 
+/// How [`slugify_with`] treats a character that is not ASCII alphanumeric.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PunctuationRule {
+    /// Whitespace, `-` and `_` fold to one `-`; every other character is
+    /// dropped, so `"rock'n'roll"` becomes `rocknroll`. [`crate::slugify`]'s
+    /// rule.
+    #[default]
+    Drop,
+    /// Every run of non-alphanumeric characters folds to one `-`, so
+    /// `"rock'n'roll"` becomes `rock-n-roll`.
+    Separator,
+}
+
 /// A host's bounds on the slugs it will derive and accept.
+///
+/// Built from [`SlugRules::new`] (or [`Default`]) and the builder methods, so
+/// a field added later does not break a host:
+///
+/// ```
+/// use tinyskills::{PunctuationRule, SlugRules, slugify_with};
+///
+/// const RULES: SlugRules<'static> = SlugRules::new()
+///     .max_chars(64)
+///     .reserved(&["draft", "upload"])
+///     .truncate(true)
+///     .punctuation(PunctuationRule::Separator)
+///     .fallback("skill");
+///
+/// assert_eq!(slugify_with("Draft", &RULES).ok().as_deref(), Some("draft-2"));
+/// assert_eq!(slugify_with("!!!", &RULES).ok().as_deref(), Some("skill"));
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SlugRules<'a> {
     /// The longest slug, in characters. Defaults to [`MAX_NAME_LEN`].
     pub max_chars: usize,
@@ -20,15 +52,66 @@ pub struct SlugRules<'a> {
     /// Whether [`slugify_with`] cuts a long name at `max_chars` rather than
     /// refusing it. Off by default, matching [`crate::slugify`].
     pub truncate: bool,
+    /// How non-alphanumeric characters are treated. Defaults to
+    /// [`PunctuationRule::Drop`].
+    pub punctuation: PunctuationRule,
+    /// The slug [`slugify_with`] returns, as given, for a name with nothing
+    /// alphanumeric in it. `None` by default, which refuses such a name.
+    pub fallback: Option<&'a str>,
 }
 
-impl Default for SlugRules<'_> {
-    fn default() -> Self {
+impl<'a> SlugRules<'a> {
+    /// The default rules: [`crate::slugify`]'s behaviour.
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             max_chars: MAX_NAME_LEN,
             reserved: &[],
             truncate: false,
+            punctuation: PunctuationRule::Drop,
+            fallback: None,
         }
+    }
+
+    /// Sets [`SlugRules::max_chars`].
+    #[must_use]
+    pub const fn max_chars(mut self, max_chars: usize) -> Self {
+        self.max_chars = max_chars;
+        self
+    }
+
+    /// Sets [`SlugRules::reserved`].
+    #[must_use]
+    pub const fn reserved(mut self, reserved: &'a [&'a str]) -> Self {
+        self.reserved = reserved;
+        self
+    }
+
+    /// Sets [`SlugRules::truncate`].
+    #[must_use]
+    pub const fn truncate(mut self, truncate: bool) -> Self {
+        self.truncate = truncate;
+        self
+    }
+
+    /// Sets [`SlugRules::punctuation`].
+    #[must_use]
+    pub const fn punctuation(mut self, punctuation: PunctuationRule) -> Self {
+        self.punctuation = punctuation;
+        self
+    }
+
+    /// Sets [`SlugRules::fallback`].
+    #[must_use]
+    pub const fn fallback(mut self, fallback: &'a str) -> Self {
+        self.fallback = Some(fallback);
+        self
+    }
+}
+
+impl Default for SlugRules<'_> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -63,30 +146,32 @@ pub enum SlugError {
 
 /// Derives a slug from a display name under `rules`.
 ///
-/// The derivation is [`crate::slugify`]'s. A name longer than
-/// [`SlugRules::max_chars`] is cut there (without a trailing `-`) when
-/// [`SlugRules::truncate`] is set, and refused otherwise. A derived slug that
-/// lands on a reserved name gets `-2` appended rather than being refused:
+/// Under [`PunctuationRule::Drop`] the derivation is [`crate::slugify`]'s, and
+/// a name longer than [`SlugRules::max_chars`] is cut there (without a
+/// trailing `-`) when [`SlugRules::truncate`] is set, and refused otherwise.
+/// Under [`PunctuationRule::Separator`] the folded name is cut at
+/// `max_chars` first and then loses any leading and trailing `-`.
+///
+/// A name with nothing alphanumeric in it yields [`SlugRules::fallback`]
+/// verbatim when one is set. A derived slug that lands on a reserved name
+/// gets `-2` appended (or the next free number) rather than being refused:
 /// deriving is authoring, and an author should not have to rename a skill to
 /// dodge a route they cannot see. [`validate_slug`] is where a reserved slug
 /// supplied directly is refused.
 ///
 /// # Errors
 ///
-/// [`AuthoringError::NoSlug`] when nothing alphanumeric remains, and
-/// [`AuthoringError::SlugTooLong`] when the slug is too long and `truncate` is
-/// off.
+/// [`AuthoringError::NoSlug`] when nothing alphanumeric remains and there is
+/// no fallback, and [`AuthoringError::SlugTooLong`] when the slug is too long
+/// and `truncate` is off.
 pub fn slugify_with(name: &str, rules: &SlugRules<'_>) -> Result<String, AuthoringError> {
-    let slug = slug_from_name(name)?;
-    let mut slug = if slug.len() <= rules.max_chars {
-        slug
-    } else if rules.truncate {
-        cut(&slug, rules.max_chars)
-    } else {
-        return Err(AuthoringError::SlugTooLong {
-            slug,
-            max: rules.max_chars,
-        });
+    let derived = match rules.punctuation {
+        PunctuationRule::Drop => slug_from_name(name).and_then(|slug| bound(slug, rules)),
+        PunctuationRule::Separator => separated_slug(name, rules),
+    };
+    let mut slug = match (derived, rules.fallback) {
+        (Err(AuthoringError::NoSlug { .. }), Some(fallback)) => return Ok(fallback.to_owned()),
+        (derived, _) => derived?,
     };
     if rules.reserved.contains(&slug.as_str()) {
         let original = slug.clone();
@@ -106,6 +191,49 @@ pub fn slugify_with(name: &str, rules: &SlugRules<'_>) -> Result<String, Authori
         }
     }
     Ok(slug)
+}
+
+fn bound(slug: String, rules: &SlugRules<'_>) -> Result<String, AuthoringError> {
+    if slug.len() <= rules.max_chars {
+        Ok(slug)
+    } else if rules.truncate {
+        Ok(cut(&slug, rules.max_chars))
+    } else {
+        Err(AuthoringError::SlugTooLong {
+            slug,
+            max: rules.max_chars,
+        })
+    }
+}
+
+fn separated_slug(name: &str, rules: &SlugRules<'_>) -> Result<String, AuthoringError> {
+    let mut folded = String::with_capacity(name.len());
+    let mut prev_dash = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            folded.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            folded.push('-');
+            prev_dash = true;
+        }
+    }
+    if rules.truncate {
+        folded.truncate(rules.max_chars.min(folded.len()));
+    }
+    let slug = folded.trim_matches('-');
+    if slug.is_empty() {
+        return Err(AuthoringError::NoSlug {
+            name: name.to_owned(),
+        });
+    }
+    if slug.len() > rules.max_chars {
+        return Err(AuthoringError::SlugTooLong {
+            slug: slug.to_owned(),
+            max: rules.max_chars,
+        });
+    }
+    Ok(slug.to_owned())
 }
 
 /// Checks a slug against `rules`: a safe `[a-z0-9][a-z0-9-]*` name, within

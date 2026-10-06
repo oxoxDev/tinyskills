@@ -64,5 +64,5 @@ pub use scan::{
     Finding, ScanCheck, ScanDocument, ScanField, ScanReport, ScanResource, Verdict, is_invisible,
     sanitize_catalogue_text, scan_skill,
 };
-pub use slug::{SlugError, SlugRules, slugify_with, validate_slug};
+pub use slug::{PunctuationRule, SlugError, SlugRules, slugify_with, validate_slug};
 pub use trigger::TriggerPattern;
