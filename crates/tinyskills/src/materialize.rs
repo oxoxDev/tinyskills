@@ -120,7 +120,7 @@ pub fn materialize_tree(
     }
 
     clear(root)?;
-    std::fs::create_dir_all(root).map_err(|e| io("creating skill tree", root, e))?;
+    at("creating skill tree", root, std::fs::create_dir_all(root))?;
 
     let mut report = MaterializeReport::default();
     for entry in entries {
@@ -128,9 +128,9 @@ pub fn materialize_tree(
         match &entry.source {
             MaterializeSource::Dir(src) => copy_dir(src, &dest, 0, &mut report)?,
             MaterializeSource::Document(document) => {
-                std::fs::create_dir_all(&dest).map_err(|e| io("creating skill dir", &dest, e))?;
+                at("creating skill dir", &dest, std::fs::create_dir_all(&dest))?;
                 let file = dest.join(SKILL_MD);
-                std::fs::write(&file, document).map_err(|e| io("writing", &file, e))?;
+                at("writing", &file, std::fs::write(&file, document))?;
                 report.files += 1;
             }
         }
@@ -142,9 +142,9 @@ pub fn materialize_tree(
 fn clear(root: &Path) -> Result<(), MaterializeError> {
     match std::fs::symlink_metadata(root) {
         Ok(metadata) if metadata.is_dir() => {
-            std::fs::remove_dir_all(root).map_err(|e| io("clearing skill tree", root, e))
+            at("clearing skill tree", root, std::fs::remove_dir_all(root))
         }
-        Ok(_) => std::fs::remove_file(root).map_err(|e| io("clearing skill tree", root, e)),
+        Ok(_) => at("clearing skill tree", root, std::fs::remove_file(root)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io("reading skill tree", root, error)),
     }
@@ -162,23 +162,31 @@ fn copy_dir(
             max: MAX_MATERIALIZE_DEPTH,
         });
     }
-    std::fs::create_dir_all(dest).map_err(|e| io("creating", dest, e))?;
-    let entries = std::fs::read_dir(src).map_err(|e| io("reading", src, e))?;
+    at("creating", dest, std::fs::create_dir_all(dest))?;
+    let entries = at("reading", src, std::fs::read_dir(src))?;
     for entry in entries {
-        let entry = entry.map_err(|e| io("reading", src, e))?;
+        let entry = at("reading", src, entry)?;
         let from = entry.path();
-        let file_type = entry.file_type().map_err(|e| io("reading", &from, e))?;
+        let file_type = at("reading", &from, entry.file_type())?;
         let to = dest.join(entry.file_name());
         if file_type.is_symlink() {
             report.skipped_symlinks += 1;
         } else if file_type.is_dir() {
             copy_dir(&from, &to, depth + 1, report)?;
         } else if file_type.is_file() {
-            std::fs::copy(&from, &to).map_err(|e| io("copying", &from, e))?;
+            at("copying", &from, std::fs::copy(&from, &to))?;
             report.files += 1;
         }
     }
     Ok(())
+}
+
+fn at<T>(
+    context: &'static str,
+    path: &Path,
+    result: std::io::Result<T>,
+) -> Result<T, MaterializeError> {
+    result.map_err(|source| io(context, path, source))
 }
 
 fn io(context: &'static str, path: &Path, source: std::io::Error) -> MaterializeError {
