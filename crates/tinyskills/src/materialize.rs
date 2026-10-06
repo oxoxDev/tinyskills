@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -119,12 +119,19 @@ pub enum MaterializeError {
 ///
 /// Source files larger than [`MAX_MATERIALIZE_FILE_BYTES`] are refused.
 ///
-/// Every source and destination operation is made relative to an open
-/// directory handle and never follows a symlink: a source entry swapped for a
-/// symlink while the copy runs fails the copy, and replacing `root` or any
-/// destination directory with a symlink fails the call rather than writing
-/// through it. Only the ancestors of `root` and of each source directory are
-/// resolved by path.
+/// The ancestors of `root` and of each source directory are resolved once
+/// with [`std::fs::canonicalize`] (the nearest existing ancestor, for a
+/// destination that does not exist yet), then walked component by component
+/// through directory handles that never follow a symlink; missing destination
+/// ancestors are created the same way. Below that point every source and
+/// destination operation is made relative to an open handle and never follows
+/// a symlink: a source entry swapped for a symlink while the copy runs fails
+/// the copy, and replacing an ancestor, `root`, or any destination directory
+/// with a symlink after the canonicalization fails the call rather than
+/// writing through it.
+///
+/// Not covered: the canonicalization itself, and an ancestor directory being
+/// renamed to a different real directory after it.
 ///
 /// # Errors
 ///
@@ -200,7 +207,8 @@ fn copy_dir(
             max: MAX_MATERIALIZE_DEPTH,
         });
     }
-    for (name, kind) in at("reading", src, source.entries())? {
+    for entry in at("reading", src, source.entries())? {
+        let (name, kind) = at("reading", src, entry)?;
         let from = src.join(&name);
         let to = dest.join(&name);
         match kind {
@@ -281,9 +289,10 @@ impl SourceDir {
         self.0.open_with(name, &options)
     }
 
-    fn entries(&self) -> std::io::Result<Vec<(OsString, EntryKind)>> {
-        let mut found = Vec::new();
-        for entry in self.0.entries()? {
+    fn entries(
+        &self,
+    ) -> std::io::Result<impl Iterator<Item = std::io::Result<(OsString, EntryKind)>>> {
+        Ok(self.0.entries()?.map(|entry| {
             let entry = entry?;
             let file_type = entry.file_type()?;
             let kind = if file_type.is_symlink() {
@@ -295,9 +304,8 @@ impl SourceDir {
             } else {
                 EntryKind::Other
             };
-            found.push((entry.file_name(), kind));
-        }
-        Ok(found)
+            Ok((entry.file_name(), kind))
+        }))
     }
 }
 
@@ -307,15 +315,10 @@ impl DestDir {
     fn replace_root(root: &Path) -> Result<Self, MaterializeError> {
         let (parent_path, name) =
             parent_and_name(root).ok_or_else(|| io("creating skill tree", root, invalid_root()))?;
-        at(
-            "creating skill tree",
-            parent_path,
-            std::fs::create_dir_all(parent_path),
-        )?;
         let parent = at(
             "creating skill tree",
             parent_path,
-            Dir::open_ambient_dir(parent_path, ambient_authority()),
+            open_anchored(parent_path, true),
         )?;
         match parent.symlink_metadata(name) {
             Ok(metadata) if metadata.is_dir() => {
@@ -369,7 +372,57 @@ fn invalid_root() -> std::io::Error {
 
 fn open_dir_nofollow_at(path: &Path) -> std::io::Result<Dir> {
     let (parent, name) = parent_and_name(path).ok_or_else(invalid_root)?;
-    Dir::open_ambient_dir(parent, ambient_authority())?.open_dir_nofollow(name)
+    open_anchored(parent, false)?.open_dir_nofollow(name)
+}
+
+fn open_anchored(path: &Path, create: bool) -> std::io::Result<Dir> {
+    let mut missing = Vec::new();
+    let mut existing = path.to_path_buf();
+    let base = loop {
+        match std::fs::canonicalize(&existing) {
+            Ok(base) => break base,
+            Err(error) if create && error.kind() == std::io::ErrorKind::NotFound => {
+                let (parent, name) = parent_and_name(&existing).ok_or_else(invalid_root)?;
+                missing.push(name.to_owned());
+                existing = parent.to_path_buf();
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    let mut dir = open_chain(&base)?;
+    for name in missing.iter().rev() {
+        match dir.create_dir(name) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+        dir = dir.open_dir_nofollow(name)?;
+    }
+    Ok(dir)
+}
+
+fn open_chain(path: &Path) -> std::io::Result<Dir> {
+    let mut head = PathBuf::new();
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next_if(|component| {
+        matches!(
+            component,
+            Component::Prefix(_) | Component::RootDir | Component::CurDir
+        )
+    }) {
+        head.push(component);
+    }
+    if head.as_os_str().is_empty() {
+        head.push(".");
+    }
+    let mut dir = Dir::open_ambient_dir(&head, ambient_authority())?;
+    for component in components {
+        let Component::Normal(name) = component else {
+            return Err(invalid_root());
+        };
+        dir = dir.open_dir_nofollow(name)?;
+    }
+    Ok(dir)
 }
 
 fn at<T>(

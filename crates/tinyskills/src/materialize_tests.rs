@@ -165,19 +165,17 @@ fn entries_are_classified_without_following_links() -> TestResult {
     std::fs::write(src.join("a.md"), "a")?;
     symlink_file(&src.join("a.md"), &src.join("link"))?;
 
-    let mut kinds: Vec<_> = SourceDir::open_root(&src)?
-        .entries()?
-        .into_iter()
-        .map(|(name, kind)| {
-            let kind = match kind {
-                EntryKind::Dir => "dir",
-                EntryKind::File => "file",
-                EntryKind::Symlink => "symlink",
-                EntryKind::Other => "other",
-            };
-            (name.to_string_lossy().into_owned(), kind)
-        })
-        .collect();
+    let mut kinds = Vec::new();
+    for entry in SourceDir::open_root(&src)?.entries()? {
+        let (name, kind) = entry?;
+        let kind = match kind {
+            EntryKind::Dir => "dir",
+            EntryKind::File => "file",
+            EntryKind::Symlink => "symlink",
+            EntryKind::Other => "other",
+        };
+        kinds.push((name.to_string_lossy().into_owned(), kind));
+    }
     kinds.sort_unstable();
 
     assert_eq!(
@@ -217,4 +215,48 @@ fn a_root_without_a_final_component_is_refused() {
         DestDir::replace_root(Path::new("/")),
         Err(MaterializeError::Io { .. })
     ));
+}
+
+#[test]
+fn a_symlink_among_the_ancestors_is_refused_by_the_walk_but_resolved_up_front() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let real = temp.path().join("real");
+    std::fs::create_dir_all(real.join("child"))?;
+    let link = temp.path().join("link");
+    symlink_dir(&real, &link)?;
+
+    assert!(open_chain(&link.join("child")).is_err());
+    assert!(open_anchored(&link.join("child"), false).is_ok());
+    Ok(())
+}
+
+#[test]
+fn missing_destination_ancestors_are_created_and_a_dangling_link_is_refused() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("a/b/skills");
+
+    materialize_tree(&root, &[doc("x", "doc")])?;
+    assert_eq!(std::fs::read_to_string(root.join("x/SKILL.md"))?, "doc");
+
+    let dangling = temp.path().join("dangling");
+    symlink_dir(&temp.path().join("nowhere"), &dangling)?;
+    let error = refused(&dangling.join("skills"), &[])?;
+    assert!(matches!(error, MaterializeError::Io { .. }), "{error:?}");
+    assert!(!temp.path().join("nowhere").exists());
+    Ok(())
+}
+
+#[test]
+fn a_relative_root_with_parent_references_resolves_through_the_filesystem() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let nested = temp.path().join("nested");
+    std::fs::create_dir_all(&nested)?;
+    let relative = nested.join("..").join("tree");
+
+    materialize_tree(&relative, &[doc("x", "doc")])?;
+    assert!(temp.path().join("tree/x/SKILL.md").is_file());
+
+    let error = refused(&nested.join("gone/../tree"), &[])?;
+    assert!(matches!(error, MaterializeError::Io { .. }), "{error:?}");
+    Ok(())
 }
