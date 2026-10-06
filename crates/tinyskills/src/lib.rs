@@ -11,6 +11,7 @@ mod archive;
 mod authoring;
 mod bundle;
 mod catalog;
+mod digest;
 mod discovery;
 mod document;
 mod flat;
@@ -39,6 +40,7 @@ pub use catalog::{
     download_url_from_source_url, filter_catalog, find_catalog_entry, find_skill_md_in_tree,
     is_safe_segment, parse_catalog_json, parse_hermes_entry,
 };
+pub use digest::document_digest;
 pub use discovery::{
     CollisionPolicy, DiscoveryRoot, TieBreak, discover, discover_with, load_skill_dir,
     resolve_collisions, resolve_collisions_with, scan_root,
