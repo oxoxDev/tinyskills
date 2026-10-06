@@ -58,8 +58,9 @@ them, and they accept anything agentskills.io allows: sequences, nested
 `extra_frontmatter` so a scan can see it. The first non-empty `category` or
 `version` wins; an empty one is kept as an extra line. Blank frontmatter lines
 are discarded. Use it when a host stores, digests, and re-serves the document
-itself: the body is kept byte for byte, and `render_flat` writes the four
-fields and then the extra lines in stored order. `parse_flat → render_flat →
+itself: the body is kept byte for byte, and `render_flat` writes `name`,
+`description`, a `category` and `version` only when non-empty, and then the
+extra lines in stored order. `parse_flat → render_flat →
 parse_flat` is a fixed point on the parsed value, not on the text: the
 rendered document is canonical, so blank lines, key case, key order, and
 whitespace around a line are not reproduced. `render_flat` cannot be made to
