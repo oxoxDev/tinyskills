@@ -13,6 +13,7 @@ mod bundle;
 mod catalog;
 mod discovery;
 mod document;
+mod flat;
 mod install;
 mod model;
 mod remove;
@@ -43,6 +44,7 @@ pub use discovery::{
     resolve_collisions, resolve_collisions_with, scan_root,
 };
 pub use document::{inventory_resources, parse_skill, parse_skill_str, read_document};
+pub use flat::{FlatError, FlatSkill, parse_flat, render_flat, split_frontmatter};
 pub use install::{
     DocumentError, DocumentWrite, FetchedDocument, InstallError, MAX_INSTALL_DOCUMENT_BYTES,
     MAX_INSTALL_URL_LEN, WriteError, check_document_size, derive_install_slug,
