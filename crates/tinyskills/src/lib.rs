@@ -29,9 +29,10 @@ pub use archive::{
     MAX_ARCHIVE_ENTRIES, SkillArchive, read_skill_archive,
 };
 pub use authoring::{
-    AuthoringError, BundleDocument, BundleSpec, ScaffoldOptions, ScaffoldOutcome,
-    render_workflow_frontmatter, render_workflow_md, scaffold_bundle, slugify,
-    validate_description, validate_display_name, yaml_scalar,
+    AuthoringError, BundleDocument, BundleSpec, DescriptionTooLong, FrontmatterTooLarge,
+    ScaffoldOptions, ScaffoldOutcome, check_frontmatter_size, render_workflow_frontmatter,
+    render_workflow_md, scaffold_bundle, slugify, validate_description, validate_description_chars,
+    validate_display_name, yaml_scalar,
 };
 pub use bundle::{BundledFile, BundledSkill, InstallReport, install, is_current_materialization};
 pub use catalog::{
