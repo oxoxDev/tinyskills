@@ -2,6 +2,26 @@ use super::*;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[cfg(unix)]
+fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(unix)]
+fn symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
+}
+
+#[cfg(windows)]
+fn symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
+}
+
 fn doc(dir_name: &str, document: &str) -> MaterializeEntry {
     MaterializeEntry {
         dir_name: dir_name.to_string(),
@@ -119,7 +139,6 @@ fn a_symlinked_root_is_unlinked_and_its_target_left_alone() -> TestResult {
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 fn an_entry_swapped_for_a_symlink_is_not_opened() -> TestResult {
     let temp = tempfile::tempdir()?;
@@ -128,8 +147,8 @@ fn an_entry_swapped_for_a_symlink_is_not_opened() -> TestResult {
     std::fs::write(outside.join("secret.txt"), "secret")?;
     let src = temp.path().join("src");
     std::fs::create_dir_all(&src)?;
-    std::os::unix::fs::symlink(outside.join("secret.txt"), src.join("file"))?;
-    std::os::unix::fs::symlink(&outside, src.join("dir"))?;
+    symlink_file(&outside.join("secret.txt"), &src.join("file"))?;
+    symlink_dir(&outside, &src.join("dir"))?;
 
     let source = SourceDir::open_root(&src)?;
 
@@ -138,14 +157,13 @@ fn an_entry_swapped_for_a_symlink_is_not_opened() -> TestResult {
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 fn entries_are_classified_without_following_links() -> TestResult {
     let temp = tempfile::tempdir()?;
     let src = temp.path().join("src");
     std::fs::create_dir_all(src.join("sub"))?;
     std::fs::write(src.join("a.md"), "a")?;
-    std::os::unix::fs::symlink(src.join("a.md"), src.join("link"))?;
+    symlink_file(&src.join("a.md"), &src.join("link"))?;
 
     let mut kinds: Vec<_> = SourceDir::open_root(&src)?
         .entries()?
@@ -173,24 +191,30 @@ fn entries_are_classified_without_following_links() -> TestResult {
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 fn destination_entries_never_follow_a_symlink() -> TestResult {
     let temp = tempfile::tempdir()?;
     let outside = temp.path().join("outside");
     std::fs::create_dir_all(&outside)?;
     let root = temp.path().join("root");
-    std::fs::create_dir_all(&root)?;
-    std::os::unix::fs::symlink(&outside, root.join("dir"))?;
-    std::os::unix::fs::symlink(outside.join("target.txt"), root.join("file"))?;
-    let tree = DestDir::open_root(&root)?;
+    let tree = DestDir::replace_root(&root)?;
+    symlink_dir(&outside, &root.join("dir"))?;
+    symlink_file(&outside.join("target.txt"), &root.join("file"))?;
 
     assert!(tree.create_dir(OsStr::new("dir")).is_err());
     assert!(tree.create_file(OsStr::new("file")).is_err());
     assert!(!outside.join("target.txt").exists());
 
     let link = temp.path().join("link");
-    std::os::unix::fs::symlink(&root, &link)?;
-    assert!(DestDir::open_root(&link).is_err());
+    symlink_dir(&root, &link)?;
+    assert!(open_dir_nofollow_at(&link).is_err());
     Ok(())
+}
+
+#[test]
+fn a_root_without_a_final_component_is_refused() {
+    assert!(matches!(
+        DestDir::replace_root(Path::new("/")),
+        Err(MaterializeError::Io { .. })
+    ));
 }

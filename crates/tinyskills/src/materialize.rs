@@ -8,9 +8,12 @@
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
-use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, File, OpenOptions};
 
 use crate::catalog::is_safe_segment;
 use crate::model::SKILL_MD;
@@ -114,17 +117,14 @@ pub enum MaterializeError {
 /// [`MaterializeSource::Dir`] as a recursive copy that skips symlinks and
 /// other non-regular files.
 ///
-/// Source files larger than [`MAX_MATERIALIZE_FILE_BYTES`] are refused. On
-/// Unix each source entry is opened relative to its parent directory without
-/// following symlinks, so replacing an entry with a symlink while the copy
-/// runs fails the copy rather than reading through the link. The recreated
-/// `root` is opened once without following symlinks and every destination
-/// entry is created relative to that handle, exclusively, so replacing `root`
-/// or a destination directory with a symlink fails the call rather than
-/// writing through it. Neither guarantee covers the ancestors of `root` or of
-/// a source directory, nor a non-Unix platform: callers must own the
-/// destination's parent directory and must not copy a source tree an
-/// untrusted party can modify concurrently.
+/// Source files larger than [`MAX_MATERIALIZE_FILE_BYTES`] are refused.
+///
+/// Every source and destination operation is made relative to an open
+/// directory handle and never follows a symlink: a source entry swapped for a
+/// symlink while the copy runs fails the copy, and replacing `root` or any
+/// destination directory with a symlink fails the call rather than writing
+/// through it. Only the ancestors of `root` and of each source directory are
+/// resolved by path.
 ///
 /// # Errors
 ///
@@ -154,9 +154,7 @@ pub fn materialize_tree(
         }
     }
 
-    clear(root)?;
-    at("creating skill tree", root, std::fs::create_dir_all(root))?;
-    let tree = at("creating skill tree", root, DestDir::open_root(root))?;
+    let tree = DestDir::replace_root(root)?;
 
     let mut report = MaterializeReport::default();
     for entry in entries {
@@ -186,17 +184,6 @@ pub fn materialize_tree(
         report.dirs.push(entry.dir_name.clone());
     }
     Ok(report)
-}
-
-fn clear(root: &Path) -> Result<(), MaterializeError> {
-    match std::fs::symlink_metadata(root) {
-        Ok(metadata) if metadata.is_dir() => {
-            at("clearing skill tree", root, std::fs::remove_dir_all(root))
-        }
-        Ok(_) => at("clearing skill tree", root, std::fs::remove_file(root)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io("reading skill tree", root, error)),
-    }
 }
 
 fn copy_dir(
@@ -235,7 +222,7 @@ fn copy_dir(
 
 fn copy_file(
     source: &SourceDir,
-    name: &OsString,
+    name: &OsStr,
     from: &Path,
     out: &DestDir,
     to: &Path,
@@ -271,10 +258,8 @@ enum EntryKind {
     Other,
 }
 
-#[cfg(unix)]
-struct SourceDir(File);
+struct SourceDir(Dir);
 
-#[cfg(unix)]
 impl SourceDir {
     fn open_root(path: &Path) -> Result<Self, MaterializeError> {
         let metadata = at("reading", path, std::fs::symlink_metadata(path))?;
@@ -283,124 +268,22 @@ impl SourceDir {
                 path: path.to_path_buf(),
             });
         }
-        let fd = at("reading", path, open_nofollow_dir(rustix::fs::CWD, path))?;
-        Ok(Self(File::from(fd)))
+        Ok(Self(at("reading", path, open_dir_nofollow_at(path))?))
     }
 
-    fn open_dir(&self, name: &OsString) -> std::io::Result<Self> {
-        let fd = open_nofollow_dir(&self.0, name)?;
-        Ok(Self(File::from(fd)))
+    fn open_dir(&self, name: &OsStr) -> std::io::Result<Self> {
+        Ok(Self(self.0.open_dir_nofollow(name)?))
     }
 
-    fn open_file(&self, name: &OsString) -> std::io::Result<File> {
-        use rustix::fs::{Mode, OFlags, openat};
-        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
-        Ok(File::from(openat(&self.0, name, flags, Mode::empty())?))
-    }
-
-    fn entries(&self) -> std::io::Result<Vec<(OsString, EntryKind)>> {
-        use rustix::fs::{AtFlags, Dir, FileType, statat};
-        use std::os::unix::ffi::OsStringExt;
-        let mut found = Vec::new();
-        for entry in Dir::read_from(&self.0)? {
-            let entry = entry?;
-            let raw = entry.file_name().to_bytes();
-            if raw == b"." || raw == b".." {
-                continue;
-            }
-            let name = OsString::from_vec(raw.to_vec());
-            let file_type = match entry.file_type() {
-                FileType::Unknown => {
-                    let stat = statat(&self.0, &name, AtFlags::SYMLINK_NOFOLLOW)?;
-                    FileType::from_raw_mode(stat.st_mode as _)
-                }
-                known => known,
-            };
-            let kind = match file_type {
-                FileType::Symlink => EntryKind::Symlink,
-                FileType::Directory => EntryKind::Dir,
-                FileType::RegularFile => EntryKind::File,
-                _ => EntryKind::Other,
-            };
-            found.push((name, kind));
-        }
-        Ok(found)
-    }
-}
-
-#[cfg(unix)]
-struct DestDir(File);
-
-#[cfg(unix)]
-impl DestDir {
-    fn open_root(path: &Path) -> std::io::Result<Self> {
-        Ok(Self(File::from(open_nofollow_dir(rustix::fs::CWD, path)?)))
-    }
-
-    fn create_dir(&self, name: &OsStr) -> std::io::Result<Self> {
-        use rustix::fs::{Mode, mkdirat};
-        mkdirat(&self.0, name, Mode::from_bits_truncate(0o777))?;
-        Ok(Self(File::from(open_nofollow_dir(&self.0, name)?)))
-    }
-
-    fn create_file(&self, name: &OsStr) -> std::io::Result<File> {
-        use rustix::fs::{Mode, OFlags, openat};
-        let flags =
-            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-        Ok(File::from(openat(
-            &self.0,
-            name,
-            flags,
-            Mode::from_bits_truncate(0o666),
-        )?))
-    }
-}
-
-#[cfg(unix)]
-fn open_nofollow_dir<Fd: std::os::fd::AsFd, P: rustix::path::Arg>(
-    parent: Fd,
-    name: P,
-) -> std::io::Result<std::os::fd::OwnedFd> {
-    use rustix::fs::{Mode, OFlags, openat};
-    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    Ok(openat(parent, name, flags, Mode::empty())?)
-}
-
-#[cfg(not(unix))]
-struct SourceDir(PathBuf);
-
-#[cfg(not(unix))]
-impl SourceDir {
-    fn open_root(path: &Path) -> Result<Self, MaterializeError> {
-        let metadata = at("reading", path, std::fs::symlink_metadata(path))?;
-        if metadata.file_type().is_symlink() {
-            return Err(MaterializeError::SymlinkedSource {
-                path: path.to_path_buf(),
-            });
-        }
-        at("reading", path, std::fs::read_dir(path))?;
-        Ok(Self(path.to_path_buf()))
-    }
-
-    fn open_dir(&self, name: &OsString) -> std::io::Result<Self> {
-        let path = self.0.join(name);
-        if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
-            return Err(std::io::Error::other("directory became a symlink"));
-        }
-        Ok(Self(path))
-    }
-
-    fn open_file(&self, name: &OsString) -> std::io::Result<File> {
-        let path = self.0.join(name);
-        if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
-            return Err(std::io::Error::other("file became a symlink"));
-        }
-        File::open(path)
+    fn open_file(&self, name: &OsStr) -> std::io::Result<File> {
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        self.0.open_with(name, &options)
     }
 
     fn entries(&self) -> std::io::Result<Vec<(OsString, EntryKind)>> {
         let mut found = Vec::new();
-        for entry in std::fs::read_dir(&self.0)? {
+        for entry in self.0.entries()? {
             let entry = entry?;
             let file_type = entry.file_type()?;
             let kind = if file_type.is_symlink() {
@@ -418,6 +301,77 @@ impl SourceDir {
     }
 }
 
+struct DestDir(Dir);
+
+impl DestDir {
+    fn replace_root(root: &Path) -> Result<Self, MaterializeError> {
+        let (parent_path, name) =
+            parent_and_name(root).ok_or_else(|| io("creating skill tree", root, invalid_root()))?;
+        at(
+            "creating skill tree",
+            parent_path,
+            std::fs::create_dir_all(parent_path),
+        )?;
+        let parent = at(
+            "creating skill tree",
+            parent_path,
+            Dir::open_ambient_dir(parent_path, ambient_authority()),
+        )?;
+        match parent.symlink_metadata(name) {
+            Ok(metadata) if metadata.is_dir() => {
+                at("clearing skill tree", root, parent.remove_dir_all(name))?;
+            }
+            Ok(_) => at(
+                "clearing skill tree",
+                root,
+                parent.remove_file_or_symlink(name),
+            )?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io("reading skill tree", root, error)),
+        }
+        at("creating skill tree", root, parent.create_dir(name))?;
+        let dir = at("creating skill tree", root, parent.open_dir_nofollow(name))?;
+        Ok(Self(dir))
+    }
+
+    fn create_dir(&self, name: &OsStr) -> std::io::Result<Self> {
+        self.0.create_dir(name)?;
+        Ok(Self(self.0.open_dir_nofollow(name)?))
+    }
+
+    fn create_file(&self, name: &OsStr) -> std::io::Result<File> {
+        let mut options = OpenOptions::new();
+        options
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        self.0.open_with(name, &options)
+    }
+}
+
+fn parent_and_name(path: &Path) -> Option<(&Path, &OsStr)> {
+    let name = path.file_name()?;
+    let parent = path.parent()?;
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    Some((parent, name))
+}
+
+fn invalid_root() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "path has no final component",
+    )
+}
+
+fn open_dir_nofollow_at(path: &Path) -> std::io::Result<Dir> {
+    let (parent, name) = parent_and_name(path).ok_or_else(invalid_root)?;
+    Dir::open_ambient_dir(parent, ambient_authority())?.open_dir_nofollow(name)
+}
+
 fn at<T>(
     context: &'static str,
     path: &Path,
@@ -431,29 +385,6 @@ fn io(context: &'static str, path: &Path, source: std::io::Error) -> Materialize
         context,
         path: path.to_path_buf(),
         source,
-    }
-}
-
-#[cfg(not(unix))]
-struct DestDir(PathBuf);
-
-#[cfg(not(unix))]
-impl DestDir {
-    fn open_root(path: &Path) -> std::io::Result<Self> {
-        Ok(Self(path.to_path_buf()))
-    }
-
-    fn create_dir(&self, name: &OsStr) -> std::io::Result<Self> {
-        let path = self.0.join(name);
-        std::fs::create_dir(&path)?;
-        Ok(Self(path))
-    }
-
-    fn create_file(&self, name: &OsStr) -> std::io::Result<File> {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(self.0.join(name))
     }
 }
 

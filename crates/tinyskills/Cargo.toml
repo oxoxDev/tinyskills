@@ -21,6 +21,8 @@ rustix.workspace = true
 zip = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
+cap-std.workspace = true
+cap-fs-ext.workspace = true
 
 [features]
 # `read_skill_archive`: read an uploaded `.zip`/`.skill`, `.tar` or `.tar.gz`

@@ -20,6 +20,10 @@ tempfile = "3"
 tokio = { version = "1", features = ["macros", "net", "rt"] }
 url = "2"
 rustix = { version = "1.1", features = ["fs"] }
+# Capability-based directory handles: race-resistant, no-follow traversal and
+# creation for `materialize_tree` on every platform.
+cap-std = "4"
+cap-fs-ext = "4"
 # Reading uploaded skill archives (the optional `archive` feature): zip with
 # deflate only, tar, and gzip for `.tar.gz`.
 zip = { version = "7", default-features = false, features = ["deflate"] }
