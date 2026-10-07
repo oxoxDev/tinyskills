@@ -15,6 +15,7 @@
 mod contract;
 mod error;
 mod fetch;
+mod hermes;
 mod source;
 mod static_source;
 mod transport;
@@ -30,6 +31,7 @@ pub use fetch::{
     FetchPolicy, GuardedResponse, RegistryDocument, RegistryLimits, RegistryTimeouts,
     fetch_skill_document,
 };
+pub use hermes::HermesIndexSource;
 pub use source::{SkillSource, SourceContext, SourceDescriptor, SourceLoad};
 pub use static_source::StaticSource;
 pub use transport::{
