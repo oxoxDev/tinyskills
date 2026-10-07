@@ -15,6 +15,8 @@
 mod contract;
 mod error;
 mod fetch;
+mod source;
+mod static_source;
 mod transport;
 mod url;
 
@@ -28,6 +30,8 @@ pub use fetch::{
     FetchPolicy, GuardedResponse, RegistryDocument, RegistryLimits, RegistryTimeouts,
     fetch_skill_document,
 };
+pub use source::{SkillSource, SourceContext, SourceDescriptor, SourceLoad};
+pub use static_source::StaticSource;
 pub use transport::{
     BodyChunks, BoxFuture, HttpMethod, RegistryTransport, Resolver, SystemResolver, TransportError,
     TransportRequest, TransportResponse,
