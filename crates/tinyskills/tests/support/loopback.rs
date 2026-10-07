@@ -133,11 +133,13 @@ fn serve(stream: TcpStream, routes: &HashMap<String, Script>, log: &Mutex<Vec<St
                 )
                 .as_bytes(),
             );
-            for byte in body {
-                std::thread::sleep(every);
-                result = result.and_then(|()| out.write_all(&[byte]));
-                if result.is_err() {
-                    break;
+            if !head_only {
+                for byte in body {
+                    std::thread::sleep(every);
+                    result = result.and_then(|()| out.write_all(&[byte]));
+                    if result.is_err() {
+                        break;
+                    }
                 }
             }
             result
@@ -222,6 +224,9 @@ impl SocketBody {
                     self.done = true;
                     return Ok(None);
                 }
+                if size > 256 * 1024 * 1024 {
+                    return Err(TransportError::Io("chunk too large".to_owned()));
+                }
                 let data = self.exact(size).await?;
                 self.exact(2).await?;
                 Ok(Some(data))
@@ -274,12 +279,11 @@ impl RegistryTransport for SocketTransport {
                 done: false,
             };
             let end = loop {
-                let end = body.buffer.windows(4).position(|w| w == b"\r\n\r\n");
-                if end.unwrap_or(body.buffer.len()) > MAX_HEAD_BYTES {
+                if body.buffer.len() > MAX_HEAD_BYTES {
                     return Err(TransportError::Io("head too large".to_owned()));
                 }
-                if let Some(end) = end {
-                    break end;
+                if let Some(pos) = body.buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break pos;
                 }
                 if !body.fill().await? {
                     return Err(TransportError::Io("eof in head".to_owned()));
