@@ -19,6 +19,7 @@ mod hermes;
 mod index;
 mod source;
 mod static_source;
+mod store;
 mod transport;
 mod url;
 
@@ -35,6 +36,9 @@ pub use fetch::{
 pub use hermes::HermesIndexSource;
 pub use source::{SkillSource, SourceContext, SourceDescriptor, SourceLoad};
 pub use static_source::StaticSource;
+pub use store::{
+    CatalogStore, Clock, FileCatalogStore, MemoryCatalogStore, StoredCatalog, SystemClock,
+};
 pub use transport::{
     BodyChunks, BoxFuture, HttpMethod, RegistryTransport, Resolver, SystemResolver, TransportError,
     TransportRequest, TransportResponse,
