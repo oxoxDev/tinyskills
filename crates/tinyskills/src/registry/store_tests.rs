@@ -103,10 +103,23 @@ async fn file_store_refuses_symlinks() {
 
 #[test]
 fn clocks_tell_time() {
-    let before = SystemTime::now();
-    assert!(SystemClock.now() >= before);
-    assert!(std::sync::Arc::new(SystemClock).now() >= before);
+    let system: &dyn Clock = &SystemClock;
+    let shared: &dyn Clock = &std::sync::Arc::new(SystemClock);
+    assert!(system.now() > SystemTime::UNIX_EPOCH);
+    assert!(shared.now() > SystemTime::UNIX_EPOCH);
     assert_eq!(StoredCatalog::default().format, StoredCatalog::FORMAT);
+}
+
+#[test]
+fn shared_clocks_delegate() {
+    struct Fixed(SystemTime);
+    impl Clock for Fixed {
+        fn now(&self) -> SystemTime {
+            self.0
+        }
+    }
+    let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(7);
+    assert_eq!(std::sync::Arc::new(Fixed(at)).now(), at);
 }
 
 #[test]
