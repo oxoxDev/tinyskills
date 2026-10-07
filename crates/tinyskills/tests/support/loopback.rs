@@ -15,6 +15,7 @@ use tinyskills::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MAX_HEAD_BYTES: usize = 64 * 1024;
+const MAX_CHUNK_HEADER_BYTES: usize = 1024;
 
 #[derive(Clone)]
 pub(crate) enum Script {
@@ -117,13 +118,22 @@ fn serve(stream: TcpStream, routes: &HashMap<String, Script>, log: &Mutex<Vec<St
             let mut result = out.write_all(
                 b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
             );
-            for part in parts.into_iter().filter(|part| !part.is_empty()) {
+            for part in parts
+                .into_iter()
+                .filter(|part| !head_only && !part.is_empty())
+            {
                 result = result
                     .and_then(|()| out.write_all(format!("{:x}\r\n", part.len()).as_bytes()))
                     .and_then(|()| out.write_all(&part))
                     .and_then(|()| out.write_all(b"\r\n"));
             }
-            result.and_then(|()| out.write_all(b"0\r\n\r\n"))
+            result.and_then(|()| {
+                if head_only {
+                    Ok(())
+                } else {
+                    out.write_all(b"0\r\n\r\n")
+                }
+            })
         }
         Script::Drip { body, every } => {
             let mut result = out.write_all(
@@ -185,6 +195,9 @@ impl SocketBody {
                 self.buffer.drain(..end + 2);
                 return Ok(line);
             }
+            if self.buffer.len() > MAX_CHUNK_HEADER_BYTES {
+                return Err(TransportError::Io("chunk header too large".to_owned()));
+            }
             if !self.fill().await? {
                 return Err(TransportError::Io("eof in chunk header".to_owned()));
             }
@@ -228,7 +241,9 @@ impl SocketBody {
                     return Err(TransportError::Io("chunk too large".to_owned()));
                 }
                 let data = self.exact(size).await?;
-                self.exact(2).await?;
+                if self.exact(2).await? != b"\r\n" {
+                    return Err(TransportError::Io("bad chunk terminator".to_owned()));
+                }
                 Ok(Some(data))
             }
         }
@@ -279,11 +294,14 @@ impl RegistryTransport for SocketTransport {
                 done: false,
             };
             let end = loop {
-                if body.buffer.len() > MAX_HEAD_BYTES {
-                    return Err(TransportError::Io("head too large".to_owned()));
-                }
                 if let Some(pos) = body.buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                    if pos > MAX_HEAD_BYTES {
+                        return Err(TransportError::Io("head too large".to_owned()));
+                    }
                     break pos;
+                }
+                if body.buffer.len() >= MAX_HEAD_BYTES + 4 {
+                    return Err(TransportError::Io("head too large".to_owned()));
                 }
                 if !body.fill().await? {
                     return Err(TransportError::Io("eof in head".to_owned()));
