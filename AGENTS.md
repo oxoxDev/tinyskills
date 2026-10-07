@@ -21,16 +21,19 @@ crates/tinyskills/
 │   ├── lib.rs          # public exports and crate overview
 │   ├── model.rs        # metadata, scopes, constants
 │   ├── document.rs     # Markdown/frontmatter parsing and inventory
+│   ├── flat.rs         # line-based SKILL.md parser and renderer
+│   ├── digest.rs       # sha256 of one rendered document
 │   ├── discovery.rs    # deterministic scanning and collisions
 │   ├── catalog/        # network-free registry catalog parsing, URLs, lookup, search
 │   ├── install.rs      # installation URL/host validation, fetched-document validation and atomic write
-│   ├── authoring.rs    # slugs, document rendering, bundle scaffolding
+│   ├── authoring.rs    # slugs, document rendering, budgets, bundle scaffolding
 │   ├── remove.rs       # defensive bundle removal
 │   ├── trigger.rs      # `triggers:` pattern parsing and matching
 │   ├── scan/           # supply-chain scan of untrusted skill text, catalogue sanitizer
-│   ├── slug.rs         # host slug bounds: length cap, reserved names
+│   ├── slug.rs         # host slug rules: length cap, reserved names, punctuation, fallback
 │   ├── archive.rs      # `archive` feature: zip/tar upload reader
 │   ├── resource.rs     # safe lookup and resource reads
+│   ├── materialize.rs  # rebuild a skill tree from documents and bundle dirs
 │   └── bundle.rs       # compile-time bundle materialization
 └── tests/
     ├── catalog.rs
@@ -39,7 +42,9 @@ crates/tinyskills/
     ├── documents.rs
     ├── edge_cases.rs
     ├── fetched_documents.rs
+    ├── flat.rs
     ├── install.rs
+    ├── materialize.rs
     ├── public_api.rs
     ├── remove.rs
     ├── resource_symlinks.rs
@@ -82,6 +87,12 @@ Prefer the standard library and existing dependencies. Declare shared
 dependencies once in the root workspace manifest, enable only required
 features, and document any substantial new dependency. Keep `Cargo.lock`
 committed.
+
+`cap-std` and `cap-fs-ext` (Bytecode Alliance) back `materialize_tree`, which
+takes open directory handles and resolves no path: everything at or below the
+handles is opened and created without following a symlink, on Unix and
+Windows alike, with no `unsafe` here. How the caller opened those handles,
+including symlinked ancestors of the paths they came from, is the caller's.
 
 ## Documentation
 

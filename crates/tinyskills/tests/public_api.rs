@@ -4,7 +4,7 @@ use std::fs;
 
 use tinyskills::{
     BundledFile, BundledSkill, DiscoveryRoot, SkillFrontmatter, SkillScope, discover,
-    inventory_resources, parse_skill_str, read_resource,
+    document_digest, inventory_resources, parse_flat, parse_skill_str, read_resource, render_flat,
 };
 
 #[test]
@@ -131,6 +131,31 @@ fn bundled_materialization_replaces_tampered_content() -> Result<(), Box<dyn std
         bundle
     ));
     Ok(())
+}
+
+#[test]
+fn a_rendered_document_digest_is_a_stable_pin() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "---\nname: Web Research\ndescription: Answer a question\nversion: 1.0.0\n---\n# Web Research\n";
+    let rendered = render_flat(&parse_flat(source)?);
+    assert_eq!(rendered, source);
+    assert_eq!(
+        document_digest(&rendered),
+        "0ef45f5926b4b5defa74aacc862bac266efb80cf8350539de29f85b458dcbcc7"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_document_digest_is_not_a_bundle_digest() {
+    static FILES: &[BundledFile] = &[BundledFile {
+        path: "SKILL.md",
+        contents: "---\nname: demo\ndescription: bundled\n---\n",
+    }];
+    let bundle = BundledSkill {
+        dir_name: "demo",
+        files: FILES,
+    };
+    assert_ne!(bundle.digest(), document_digest(FILES[0].contents));
 }
 
 fn write_skill(dir: &std::path::Path, name: &str, description: &str) -> std::io::Result<()> {

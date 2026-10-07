@@ -6,6 +6,7 @@
 //! product-specific sidecar files next to the returned document.
 
 use crate::document::parse_skill;
+use crate::flat::split_frontmatter;
 use crate::model::{MAX_DESCRIPTION_LEN, MAX_NAME_LEN, RESOURCE_DIRS, SKILL_MD, WORKFLOW_MD};
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
@@ -206,6 +207,71 @@ pub fn validate_description(description: &str) -> Result<&str, AuthoringError> {
         });
     }
     Ok(description)
+}
+
+/// A description longer than a host's character budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error(
+    "that description is {chars} characters; a description has to be {max} characters or fewer"
+)]
+pub struct DescriptionTooLong {
+    /// The description's length, in characters.
+    pub chars: usize,
+    /// The budget it exceeded.
+    pub max: usize,
+}
+
+/// Checks a description against a budget counted in characters, not bytes.
+///
+/// The description is measured as given; trim it first if the host does.
+/// Unlike [`validate_description`], an empty description passes.
+///
+/// # Errors
+///
+/// [`DescriptionTooLong`] when it is longer than `max_chars` characters.
+pub fn validate_description_chars(
+    description: &str,
+    max_chars: usize,
+) -> Result<(), DescriptionTooLong> {
+    let chars = description.chars().count();
+    if chars > max_chars {
+        return Err(DescriptionTooLong {
+            chars,
+            max: max_chars,
+        });
+    }
+    Ok(())
+}
+
+/// A frontmatter block larger than a host's byte budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error(
+    "that skill's frontmatter block is {bytes} bytes; a frontmatter block has to be {max} bytes or fewer"
+)]
+pub struct FrontmatterTooLarge {
+    /// The block's size, in bytes, fences excluded.
+    pub bytes: usize,
+    /// The budget it exceeded.
+    pub max: usize,
+}
+
+/// Checks the frontmatter block of `src`, as [`split_frontmatter`] finds it,
+/// against a byte budget.
+///
+/// A document with no frontmatter block passes; refusing it is the parser's
+/// job.
+///
+/// # Errors
+///
+/// [`FrontmatterTooLarge`] when the block is larger than `max_bytes`.
+pub fn check_frontmatter_size(src: &str, max_bytes: usize) -> Result<(), FrontmatterTooLarge> {
+    match split_frontmatter(src) {
+        Some((frontmatter, _)) if frontmatter.len() > max_bytes => Err(FrontmatterTooLarge {
+            bytes: frontmatter.len(),
+            max: max_bytes,
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Convert a human-readable name to a filesystem-safe slug.

@@ -3,9 +3,11 @@
 use std::fs;
 
 use tinyskills::{
-    AuthoringError, BundleDocument, BundleSpec, MAX_NAME_LEN, ScaffoldOptions, SlugError,
-    SlugRules, parse_skill_str, render_workflow_frontmatter, render_workflow_md, scaffold_bundle,
-    slugify, slugify_with, validate_description, validate_display_name, validate_slug, yaml_scalar,
+    AuthoringError, BundleDocument, BundleSpec, DescriptionTooLong, FrontmatterTooLarge,
+    MAX_DESCRIPTION_LEN, MAX_NAME_LEN, PunctuationRule, ScaffoldOptions, SlugError, SlugRules,
+    check_frontmatter_size, parse_skill_str, render_workflow_frontmatter, render_workflow_md,
+    scaffold_bundle, slugify, slugify_with, validate_description, validate_description_chars,
+    validate_display_name, validate_slug, yaml_scalar,
 };
 
 fn spec(slug: &str) -> BundleSpec {
@@ -293,11 +295,10 @@ fn scaffold_refuses_a_symlinked_bundle_dir() -> Result<(), Box<dyn std::error::E
 // --- product bounds on slugs ---
 
 /// A host whose skill routes sit beside static ones, with a tighter cap.
-const PRODUCT: SlugRules<'static> = SlugRules {
-    max_chars: 12,
-    reserved: &["draft", "upload"],
-    truncate: true,
-};
+const PRODUCT: SlugRules<'static> = SlugRules::new()
+    .max_chars(12)
+    .reserved(&["draft", "upload"])
+    .truncate(true);
 
 #[test]
 fn default_slug_rules_match_slugify() -> Result<(), AuthoringError> {
@@ -332,6 +333,33 @@ fn a_truncating_rule_cuts_at_the_cap_without_a_trailing_dash() -> Result<(), Aut
 fn slugify_steps_around_a_reserved_slug() -> Result<(), AuthoringError> {
     assert_eq!(slugify_with("Draft", &PRODUCT)?, "draft-2");
     assert_eq!(slugify_with("Drafting", &PRODUCT)?, "drafting");
+    Ok(())
+}
+
+/// A host that folds every punctuation run to a separator and never refuses a
+/// name: what it derives always passes its own [`validate_slug`].
+#[test]
+fn separator_rules_with_a_fallback_always_yield_a_valid_slug() -> Result<(), AuthoringError> {
+    const SEPARATED: SlugRules<'static> = SlugRules::new()
+        .reserved(&["draft", "upload", "registry"])
+        .truncate(true)
+        .punctuation(PunctuationRule::Separator)
+        .fallback("skill");
+
+    assert_eq!(
+        slugify_with("Q3 board-pack (v2)", &SEPARATED)?,
+        "q3-board-pack-v2"
+    );
+    assert_eq!(slugify_with("Registry", &SEPARATED)?, "registry-2");
+    assert_eq!(slugify_with("???", &SEPARATED)?, "skill");
+    for name in ["x".repeat(200), " a ".repeat(40), "Upload".to_owned()] {
+        let slug = slugify_with(&name, &SEPARATED)?;
+        assert_eq!(
+            validate_slug(&slug, &SEPARATED),
+            Ok(()),
+            "{name:?} -> {slug:?}"
+        );
+    }
     Ok(())
 }
 
@@ -372,4 +400,91 @@ fn validate_slug_names_each_refusal() {
     }
     .to_string();
     assert!(message.contains("reserved"), "{message}");
+}
+
+// --- character and byte budgets ---
+
+fn skill_md(description: &str) -> String {
+    format!("---\nname: demo\ndescription: {description}\n---\n# Body\n")
+}
+
+#[test]
+fn a_description_at_the_character_cap_passes_and_one_over_is_refused() {
+    let at_cap = "d".repeat(MAX_DESCRIPTION_LEN);
+    assert_eq!(
+        validate_description_chars(&at_cap, MAX_DESCRIPTION_LEN),
+        Ok(())
+    );
+
+    let over = "d".repeat(MAX_DESCRIPTION_LEN + 1);
+    let refused = validate_description_chars(&over, MAX_DESCRIPTION_LEN);
+    assert_eq!(
+        refused,
+        Err(DescriptionTooLong {
+            chars: MAX_DESCRIPTION_LEN + 1,
+            max: MAX_DESCRIPTION_LEN,
+        })
+    );
+    let message = refused
+        .map_err(|error| error.to_string())
+        .err()
+        .unwrap_or_default();
+    assert!(message.contains("1025 characters"), "{message}");
+    assert!(message.contains("1024"), "{message}");
+}
+
+#[test]
+fn the_description_budget_counts_characters_not_bytes() {
+    let multibyte = "é".repeat(MAX_DESCRIPTION_LEN);
+    assert!(multibyte.len() > MAX_DESCRIPTION_LEN);
+    assert_eq!(
+        validate_description_chars(&multibyte, MAX_DESCRIPTION_LEN),
+        Ok(())
+    );
+    assert_eq!(validate_description_chars("", 0), Ok(()));
+}
+
+#[test]
+fn a_frontmatter_block_over_the_byte_budget_is_refused() {
+    let padding = "x".repeat(4096);
+    let src = format!("---\nname: demo\ndescription: short\npadding: {padding}\n---\n# Body\n");
+    let refused = check_frontmatter_size(&src, 4096);
+    assert!(
+        matches!(refused, Err(FrontmatterTooLarge { bytes, max: 4096 }) if bytes > 4096),
+        "{refused:?}"
+    );
+    let message = refused
+        .map_err(|error| error.to_string())
+        .err()
+        .unwrap_or_default();
+    assert!(message.contains("frontmatter block"), "{message}");
+}
+
+#[test]
+fn a_frontmatter_block_within_the_budget_passes_with_unknown_keys() {
+    let padding = "x".repeat(2048);
+    let src = format!("---\nname: demo\ndescription: short\npadding: {padding}\n---\n# Body\n");
+    assert_eq!(check_frontmatter_size(&src, 4096), Ok(()));
+}
+
+#[test]
+fn the_frontmatter_budget_is_inclusive_and_excludes_the_fences_and_body() {
+    let src = skill_md("d");
+    let block = "name: demo\ndescription: d\n".len();
+    assert_eq!(check_frontmatter_size(&src, block), Ok(()));
+    assert_eq!(
+        check_frontmatter_size(&src, block - 1),
+        Err(FrontmatterTooLarge {
+            bytes: block,
+            max: block - 1,
+        })
+    );
+    let big_body = format!("{}{}", skill_md("d"), "b".repeat(10_000));
+    assert_eq!(check_frontmatter_size(&big_body, block), Ok(()));
+}
+
+#[test]
+fn a_document_without_frontmatter_passes_the_size_check() {
+    assert_eq!(check_frontmatter_size("# No frontmatter\n", 0), Ok(()));
+    assert_eq!(check_frontmatter_size("---\nname: x\n", 0), Ok(()));
 }
