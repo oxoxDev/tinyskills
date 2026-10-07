@@ -422,3 +422,7 @@ impl Validators {
         headers
     }
 }
+
+#[cfg(test)]
+#[path = "contract_tests.rs"]
+mod tests;
