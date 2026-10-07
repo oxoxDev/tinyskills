@@ -364,3 +364,7 @@ fn duplicate_document_error(error: &DocumentError) -> Option<DocumentError> {
         DocumentError::InvalidUtf8(_) => return None,
     })
 }
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod tests;
