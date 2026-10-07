@@ -74,6 +74,23 @@ pub trait CatalogStore: Send + Sync {
     ) -> BoxFuture<'a, Result<(), StoreError>>;
 }
 
+impl<T: CatalogStore + ?Sized> CatalogStore for std::sync::Arc<T> {
+    fn load<'a>(
+        &'a self,
+        registry: &'a str,
+    ) -> BoxFuture<'a, Result<Option<StoredCatalog>, StoreError>> {
+        (**self).load(registry)
+    }
+
+    fn save<'a>(
+        &'a self,
+        registry: &'a str,
+        catalog: &'a StoredCatalog,
+    ) -> BoxFuture<'a, Result<(), StoreError>> {
+        (**self).save(registry, catalog)
+    }
+}
+
 /// An in-process store; nothing survives the process.
 #[derive(Debug, Default)]
 pub struct MemoryCatalogStore {
@@ -191,6 +208,12 @@ async fn blocking<T: Send + 'static>(
         .map_err(|error| StoreError::Io(error.to_string()))?
 }
 
+#[derive(Deserialize)]
+struct FormatProbe {
+    #[serde(default)]
+    format: u32,
+}
+
 fn read_catalog(path: &Path, max_bytes: u64) -> Result<Option<StoredCatalog>, StoreError> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -211,12 +234,7 @@ fn read_catalog(path: &Path, max_bytes: u64) -> Result<Option<StoredCatalog>, St
     if bytes.len() as u64 > max_bytes {
         return Err(StoreError::TooLarge { limit: max_bytes });
     }
-    #[derive(Deserialize)]
-    struct Format {
-        #[serde(default)]
-        format: u32,
-    }
-    let format: Format =
+    let format: FormatProbe =
         serde_json::from_slice(&bytes).map_err(|error| StoreError::Corrupt(error.to_string()))?;
     if format.format != StoredCatalog::FORMAT {
         return Ok(None);
@@ -247,6 +265,12 @@ fn write_catalog(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), StoreError
 pub trait Clock: Send + Sync {
     /// The current time.
     fn now(&self) -> SystemTime;
+}
+
+impl<T: Clock + ?Sized> Clock for std::sync::Arc<T> {
+    fn now(&self) -> SystemTime {
+        (**self).now()
+    }
 }
 
 /// The system wall clock.

@@ -74,10 +74,6 @@ impl CatalogIndex {
         self.entries.get(position)
     }
 
-    pub(crate) fn entries(&self) -> &[RegistryEntry] {
-        &self.entries
-    }
-
     pub(crate) fn upstream_facets(&self) -> &[Facet] {
         &self.upstreams
     }

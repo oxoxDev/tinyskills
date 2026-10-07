@@ -360,6 +360,7 @@ impl HermesItem {
     }
 }
 
+#[derive(Default)]
 struct MaybeItem(Option<HermesItem>);
 
 impl<'de> Deserialize<'de> for MaybeItem {
@@ -438,12 +439,6 @@ impl<'de> Visitor<'de> for ItemVisitor {
             }
         }
         Ok(MaybeItem(Some(item)))
-    }
-}
-
-impl Default for MaybeItem {
-    fn default() -> Self {
-        Self(None)
     }
 }
 
