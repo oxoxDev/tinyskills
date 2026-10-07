@@ -12,10 +12,16 @@
 //! connection to the addresses it checked, re-validates every redirect hop and
 //! bounds every body and every operation.
 
+mod contract;
 mod error;
 mod transport;
 mod url;
 
+pub use contract::{
+    EntryKey, Facet, Freshness, REGISTRY_CONTRACT_VERSION, ReadPolicy, RegistryEntry,
+    RegistryErrorSummary, RegistryFacets, SkillDetail, SkillPage, SkillQuery, SkillSummary,
+    SourceStatus, Validators, is_registry_contract_compatible,
+};
 pub use error::{RegistryError, RegistryErrorKind, StoreError};
 pub use transport::{
     BodyChunks, BoxFuture, HttpMethod, RegistryTransport, Resolver, SystemResolver, TransportError,
