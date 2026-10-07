@@ -178,10 +178,14 @@ struct SocketBody {
 
 impl SocketBody {
     async fn fill(&mut self) -> Result<bool, TransportError> {
+        self.fill_capped(8192).await
+    }
+
+    async fn fill_capped(&mut self, cap: usize) -> Result<bool, TransportError> {
         let mut chunk = [0_u8; 8192];
         let read = self
             .stream
-            .read(&mut chunk)
+            .read(&mut chunk[..cap.clamp(1, 8192)])
             .await
             .map_err(|e| TransportError::Io(e.to_string()))?;
         self.buffer.extend_from_slice(&chunk[..read]);
@@ -191,14 +195,20 @@ impl SocketBody {
     async fn line(&mut self) -> Result<String, TransportError> {
         loop {
             if let Some(end) = self.buffer.windows(2).position(|w| w == b"\r\n") {
-                let line = String::from_utf8_lossy(&self.buffer[..end]).into_owned();
+                if end > MAX_CHUNK_HEADER_BYTES {
+                    return Err(TransportError::Io("chunk header too large".to_owned()));
+                }
+                let line = std::str::from_utf8(&self.buffer[..end])
+                    .map_err(|e| TransportError::Io(e.to_string()))?
+                    .to_owned();
                 self.buffer.drain(..end + 2);
                 return Ok(line);
             }
-            if self.buffer.len() > MAX_CHUNK_HEADER_BYTES {
+            let remaining = (MAX_CHUNK_HEADER_BYTES + 2).saturating_sub(self.buffer.len());
+            if remaining == 0 {
                 return Err(TransportError::Io("chunk header too large".to_owned()));
             }
-            if !self.fill().await? {
+            if !self.fill_capped(remaining).await? {
                 return Err(TransportError::Io("eof in chunk header".to_owned()));
             }
         }
@@ -300,14 +310,17 @@ impl RegistryTransport for SocketTransport {
                     }
                     break pos;
                 }
-                if body.buffer.len() >= MAX_HEAD_BYTES + 4 {
+                let remaining = (MAX_HEAD_BYTES + 4).saturating_sub(body.buffer.len());
+                if remaining == 0 {
                     return Err(TransportError::Io("head too large".to_owned()));
                 }
-                if !body.fill().await? {
+                if !body.fill_capped(remaining).await? {
                     return Err(TransportError::Io("eof in head".to_owned()));
                 }
             };
-            let head = String::from_utf8_lossy(&body.buffer[..end]).into_owned();
+            let head = std::str::from_utf8(&body.buffer[..end])
+                .map_err(|e| TransportError::Io(e.to_string()))?
+                .to_owned();
             body.buffer.drain(..end + 4);
             let mut lines = head.split("\r\n");
             let status = lines
