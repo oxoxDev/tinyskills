@@ -14,6 +14,7 @@
 
 mod contract;
 mod error;
+mod fetch;
 mod transport;
 mod url;
 
@@ -23,6 +24,10 @@ pub use contract::{
     SourceStatus, Validators, is_registry_contract_compatible,
 };
 pub use error::{RegistryError, RegistryErrorKind, StoreError};
+pub use fetch::{
+    FetchPolicy, GuardedResponse, RegistryDocument, RegistryLimits, RegistryTimeouts,
+    fetch_skill_document,
+};
 pub use transport::{
     BodyChunks, BoxFuture, HttpMethod, RegistryTransport, Resolver, SystemResolver, TransportError,
     TransportRequest, TransportResponse,
