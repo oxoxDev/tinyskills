@@ -135,8 +135,8 @@ impl CatalogStore for MemoryCatalogStore {
 /// One JSON file per registry, `<dir>/<registry>.json`, written atomically.
 ///
 /// A file in another format reads as absent. A registry id that is not a
-/// plain path segment, a symlinked file and a file over the read limit are
-/// refused.
+/// plain path segment, a symlinked file or store directory and a file over
+/// the read limit are refused.
 #[derive(Debug, Clone)]
 pub struct FileCatalogStore {
     dir: PathBuf,
@@ -178,9 +178,14 @@ impl CatalogStore for FileCatalogStore {
     ) -> BoxFuture<'a, Result<Option<StoredCatalog>, StoreError>> {
         let path = self.path(registry);
         let max_bytes = self.max_bytes;
+        let dir = self.dir.clone();
         Box::pin(async move {
             let path = path?;
-            blocking(move || read_catalog(&path, max_bytes)).await
+            blocking(move || {
+                refuse_symlinked_root(&dir)?;
+                read_catalog(&path, max_bytes)
+            })
+            .await
         })
     }
 
@@ -244,7 +249,17 @@ fn read_catalog(path: &Path, max_bytes: u64) -> Result<Option<StoredCatalog>, St
         .map_err(|error| StoreError::Corrupt(error.to_string()))
 }
 
+fn refuse_symlinked_root(dir: &Path) -> Result<(), StoreError> {
+    match std::fs::symlink_metadata(dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(StoreError::Symlink),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(StoreError::Io(error.to_string())),
+    }
+}
+
 fn write_catalog(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
+    refuse_symlinked_root(dir)?;
     std::fs::create_dir_all(dir).map_err(|error| StoreError::Io(error.to_string()))?;
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

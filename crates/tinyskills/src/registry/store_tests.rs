@@ -110,6 +110,20 @@ fn clocks_tell_time() {
     assert_eq!(StoredCatalog::default().format, StoredCatalog::FORMAT);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn file_store_refuses_a_symlinked_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let store = FileCatalogStore::new(&link);
+    assert_eq!(store.save("r", &catalog()).await, Err(StoreError::Symlink));
+    assert_eq!(store.load("r").await, Err(StoreError::Symlink));
+    assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
+}
+
 #[test]
 fn shared_clocks_delegate() {
     struct Fixed(SystemTime);
