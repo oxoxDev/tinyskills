@@ -367,6 +367,30 @@ async fn failed_refresh_keeps_the_cache_and_cools_down() {
 }
 
 #[tokio::test]
+async fn cooldown_bounds_an_extreme_retry_after() {
+    let rig = Rig::new();
+    rig.transport.get(
+        INDEX,
+        Reply::status(429, "slow down").header("Retry-After", "18446744073709551615"),
+    );
+    let registry = rig.registry();
+
+    let error = registry.search(&query("")).await.unwrap_err();
+    assert_eq!(error.kind(), RegistryErrorKind::RateLimited);
+    rig.clock.advance(Duration::from_secs(3600));
+    registry.search(&query("")).await.unwrap_err();
+    assert_eq!(rig.index_calls(), 1);
+
+    rig.clock.advance(Duration::from_secs(24 * 3600));
+    rig.transport.get(INDEX, Reply::ok(FIXTURE));
+    assert_eq!(
+        registry.search(&query("")).await.unwrap().total,
+        fixture_len()
+    );
+    assert_eq!(rig.index_calls(), 2);
+}
+
+#[tokio::test]
 async fn cooldown_honours_retry_after() {
     let rig = Rig::new();
     rig.transport.get(

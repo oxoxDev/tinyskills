@@ -21,6 +21,7 @@ use super::transport::{RegistryTransport, Resolver, SystemResolver};
 use super::url::normalize_registry_document_url;
 
 const DEFAULT_TTL: Duration = Duration::from_secs(3600);
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(24 * 3600);
 
 /// A set of skill sources behind one cache and one query API.
 ///
@@ -307,11 +308,11 @@ impl Shared {
                 Ok(())
             }
             Err(error) => {
-                let wait = error
-                    .retry_after()
-                    .map_or(self.cooldown, |delay| delay.max(self.cooldown));
+                let wait = error.retry_after().map_or(self.cooldown, |delay| {
+                    delay.min(MAX_RETRY_AFTER).max(self.cooldown)
+                });
                 let mut state = slot.write();
-                state.cooldown_until = Some(now + wait);
+                state.cooldown_until = now.checked_add(wait);
                 state.last_error = Some(error.duplicate());
                 Err(error)
             }
