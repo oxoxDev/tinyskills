@@ -12,9 +12,11 @@
 //! connection to the addresses it checked, re-validates every redirect hop and
 //! bounds every body and every operation.
 
+mod error;
 mod transport;
 mod url;
 
+pub use error::{RegistryError, RegistryErrorKind, StoreError};
 pub use transport::{
     BodyChunks, BoxFuture, HttpMethod, RegistryTransport, Resolver, SystemResolver, TransportError,
     TransportRequest, TransportResponse,
