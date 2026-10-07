@@ -623,6 +623,31 @@ async fn corrupt_store_falls_through_to_a_fetch() {
 }
 
 #[tokio::test]
+async fn unrepresentable_stored_timestamp_is_treated_as_corrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = Rig::new();
+    let seed = rig
+        .builder()
+        .store(FileCatalogStore::new(dir.path()))
+        .build();
+    seed.search(&query("")).await.unwrap();
+    let path = dir.path().join("hermes.json");
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stored["fetched_at"] = serde_json::json!(u64::MAX);
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let registry = rig
+        .builder()
+        .store(FileCatalogStore::new(dir.path()))
+        .build();
+    let page = registry.search(&query("")).await.unwrap();
+    assert_eq!(page.total, fixture_len());
+    assert_eq!(page.freshness, Freshness::Live);
+    assert_eq!(rig.index_calls(), 2);
+}
+
+#[tokio::test]
 async fn store_write_failures_are_reported_not_fatal() {
     let dir = tempfile::tempdir().unwrap();
     let blocker = dir.path().join("file");

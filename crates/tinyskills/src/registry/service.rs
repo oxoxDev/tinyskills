@@ -10,7 +10,7 @@ use super::contract::{
     EntryKey, Freshness, ReadPolicy, RegistryEntry, RegistryErrorSummary, RegistryFacets,
     SkillDetail, SkillPage, SkillQuery, SkillSummary, SourceStatus, Validators,
 };
-use super::error::RegistryError;
+use super::error::{RegistryError, StoreError};
 use super::fetch::{
     FetchPolicy, GuardedFetcher, RegistryDocument, RegistryLimits, RegistryTimeouts, build_document,
 };
@@ -229,8 +229,17 @@ impl Shared {
         let mut error = None;
         match loaded {
             Ok(Some(stored)) => {
-                stored_meta = Some((stored.fetched_at, stored.validators, stored.skipped));
-                index = Some(Arc::new(CatalogIndex::new(stored.entries)));
+                match SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(stored.fetched_at)) {
+                    Some(fetched_at) => {
+                        stored_meta = Some((fetched_at, stored.validators, stored.skipped));
+                        index = Some(Arc::new(CatalogIndex::new(stored.entries)));
+                    }
+                    None => {
+                        error = Some(RegistryError::Store(StoreError::Corrupt(
+                            "fetched_at is out of range".to_owned(),
+                        )));
+                    }
+                }
             }
             Ok(None) => {}
             Err(store_error) => error = Some(RegistryError::Store(store_error)),
@@ -241,7 +250,7 @@ impl Shared {
             && let (Some(index), Some((fetched_at, validators, skipped))) = (index, stored_meta)
         {
             state.index = Some(index);
-            state.fetched_at = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(fetched_at));
+            state.fetched_at = Some(fetched_at);
             state.validators = validators;
             state.skipped = skipped;
         }
