@@ -89,6 +89,9 @@ impl SourceContext {
     /// `max_bytes` of a `2xx` body, within `budget`. `what` names the
     /// operation in errors.
     ///
+    /// `Authorization`, `Proxy-Authorization` and `Cookie` headers are
+    /// dropped from a redirect hop that changes origin.
+    ///
     /// # Errors
     ///
     /// [`RegistryError::UnsafeUrl`] for a refused URL or redirect hop,

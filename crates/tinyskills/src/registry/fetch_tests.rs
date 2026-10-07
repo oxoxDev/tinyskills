@@ -114,3 +114,102 @@ fn guarded_response_helpers() {
     assert!(ok.clone().error_for_status().is_ok());
     assert_eq!(ok.header("retry-after"), Some(" 12 "));
 }
+
+struct RedirectTransport {
+    seen: std::sync::Mutex<Vec<TransportRequest>>,
+    hops: Vec<(&'static str, &'static str)>,
+}
+
+struct Empty;
+
+impl crate::BodyChunks for Empty {
+    fn next_chunk(&mut self) -> BoxFuture<'_, Result<Option<Vec<u8>>, TransportError>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+impl RegistryTransport for RedirectTransport {
+    fn send(
+        &self,
+        request: TransportRequest,
+    ) -> BoxFuture<'_, Result<TransportResponse, TransportError>> {
+        let target = self
+            .hops
+            .iter()
+            .find(|(from, _)| *from == request.url)
+            .map(|(_, to)| (*to).to_owned());
+        let url = request.url.clone();
+        self.seen.lock().unwrap().push(request);
+        Box::pin(async move {
+            Ok(match target {
+                Some(location) => TransportResponse::new(
+                    302,
+                    url,
+                    vec![("Location".to_owned(), location)],
+                    Box::new(Empty),
+                ),
+                None => TransportResponse::new(200, url, Vec::new(), Box::new(Empty)),
+            })
+        })
+    }
+}
+
+async fn follow(hops: Vec<(&'static str, &'static str)>, start: &str) -> Vec<TransportRequest> {
+    let transport = Arc::new(RedirectTransport {
+        seen: std::sync::Mutex::new(Vec::new()),
+        hops,
+    });
+    let fetcher = GuardedFetcher::new(
+        Arc::clone(&transport) as Arc<dyn RegistryTransport>,
+        Arc::new(crate::SystemResolver),
+        FetchPolicy::default(),
+        &RegistryTimeouts::default(),
+        &RegistryLimits::default(),
+    );
+    let headers = vec![
+        ("Authorization".to_owned(), "Bearer secret".to_owned()),
+        ("proxy-authorization".to_owned(), "Basic secret".to_owned()),
+        ("COOKIE".to_owned(), "a=b".to_owned()),
+        ("Accept".to_owned(), "application/json".to_owned()),
+    ];
+    fetcher
+        .fetch(FetchSpec {
+            method: HttpMethod::Get,
+            url: start,
+            headers: &headers,
+            max_bytes: 1024,
+            what: "document",
+            budget: Duration::from_secs(5),
+        })
+        .await
+        .unwrap();
+    transport.seen.lock().unwrap().clone()
+}
+
+#[tokio::test]
+async fn credentials_are_dropped_on_a_cross_origin_redirect() {
+    let seen = follow(
+        vec![("https://[2606:4700::1111]/a", "https://[2606:4700::1112]/b")],
+        "https://[2606:4700::1111]/a",
+    )
+    .await;
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].header("authorization"), Some("Bearer secret"));
+    assert_eq!(seen[0].header("cookie"), Some("a=b"));
+    assert_eq!(seen[1].header("authorization"), None);
+    assert_eq!(seen[1].header("proxy-authorization"), None);
+    assert_eq!(seen[1].header("cookie"), None);
+    assert_eq!(seen[1].header("accept"), Some("application/json"));
+}
+
+#[tokio::test]
+async fn credentials_survive_a_same_origin_redirect() {
+    let seen = follow(
+        vec![("https://[2606:4700::1111]/a", "https://[2606:4700::1111]/b")],
+        "https://[2606:4700::1111]/a",
+    )
+    .await;
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[1].header("authorization"), Some("Bearer secret"));
+    assert_eq!(seen[1].header("cookie"), Some("a=b"));
+}

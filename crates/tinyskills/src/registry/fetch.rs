@@ -272,7 +272,11 @@ impl GuardedFetcher {
                         limit: self.max_redirects as u64,
                     });
                 }
-                url = next_hop(&url, location)?;
+                let next = next_hop(&url, location)?;
+                if !same_origin(&url, &next) {
+                    headers.retain(|(name, _)| !is_credential_header(name));
+                }
+                url = next;
                 hops += 1;
                 continue;
             }
@@ -382,6 +386,19 @@ fn check_addresses(
         }
     }
     Ok(addresses)
+}
+
+fn is_credential_header(name: &str) -> bool {
+    ["authorization", "proxy-authorization", "cookie"]
+        .iter()
+        .any(|credential| name.eq_ignore_ascii_case(credential))
+}
+
+fn same_origin(a: &str, b: &str) -> bool {
+    match (::url::Url::parse(a), ::url::Url::parse(b)) {
+        (Ok(a), Ok(b)) => a.origin() == b.origin(),
+        _ => false,
+    }
 }
 
 fn next_hop(current: &str, location: &str) -> Result<String, RegistryError> {
