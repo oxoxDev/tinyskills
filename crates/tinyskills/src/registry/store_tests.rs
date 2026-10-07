@@ -108,3 +108,36 @@ fn clocks_tell_time() {
     assert!(std::sync::Arc::new(SystemClock).now() >= before);
     assert_eq!(StoredCatalog::default().format, StoredCatalog::FORMAT);
 }
+
+#[test]
+fn exclusive_create_refuses_existing_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let existing = dir.path().join("existing");
+    std::fs::write(&existing, b"keep").unwrap();
+    assert!(create_exclusive(&existing).is_err());
+    assert_eq!(std::fs::read(&existing).unwrap(), b"keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn exclusive_create_does_not_follow_a_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("target");
+    std::fs::write(&target, b"keep").unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(create_exclusive(&link).is_err());
+    assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn open_no_follow_refuses_a_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("target");
+    std::fs::write(&target, b"data").unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(open_no_follow(&link).is_err());
+    assert!(open_no_follow(&target).is_ok());
+}

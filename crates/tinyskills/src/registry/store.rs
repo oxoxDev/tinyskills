@@ -1,7 +1,7 @@
 //! Persistence of fetched catalogs, and the clock that ages them.
 
 use std::collections::HashMap;
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
@@ -226,7 +226,7 @@ fn read_catalog(path: &Path, max_bytes: u64) -> Result<Option<StoredCatalog>, St
     if metadata.len() > max_bytes {
         return Err(StoreError::TooLarge { limit: max_bytes });
     }
-    let file = std::fs::File::open(path).map_err(|error| StoreError::Io(error.to_string()))?;
+    let file = open_no_follow(path).map_err(|error| StoreError::Io(error.to_string()))?;
     let mut bytes = Vec::new();
     file.take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -253,12 +253,47 @@ fn write_catalog(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), StoreError
     let mut temp = path.as_os_str().to_owned();
     temp.push(format!(".tmp.{}.{nanos}", std::process::id()));
     let temp = PathBuf::from(temp);
-    let result = std::fs::write(&temp, bytes).and_then(|()| std::fs::rename(&temp, path));
+    let mut file = match create_exclusive(&temp) {
+        Ok(file) => file,
+        Err(error) => return Err(StoreError::Io(error.to_string())),
+    };
+    let result = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| std::fs::rename(&temp, path));
     if let Err(error) = result {
         let _ = std::fs::remove_file(&temp);
         return Err(StoreError::Io(error.to_string()));
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn no_follow_flag() -> i32 {
+    use rustix::fs::OFlags;
+    i32::try_from(OFlags::NOFOLLOW.bits()).unwrap_or(0)
+}
+
+fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(no_follow_flag());
+    }
+    options.open(path)
+}
+
+fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(no_follow_flag());
+    }
+    options.open(path)
 }
 
 /// The registry's notion of now, for ages and cooldowns.
