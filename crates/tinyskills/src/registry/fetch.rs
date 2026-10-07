@@ -490,3 +490,7 @@ pub async fn fetch_skill_document(
         .error_for_status()?;
     build_document(None, &response.url, &response.body)
 }
+
+#[cfg(test)]
+#[path = "fetch_tests.rs"]
+mod tests;
