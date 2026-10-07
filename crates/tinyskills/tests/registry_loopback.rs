@@ -158,7 +158,7 @@ async fn an_oversized_response_head_is_refused() {
         "/big.md",
         Script::Plain {
             status: 200,
-            headers: vec![("X-Pad".to_owned(), "a".repeat(200_000))],
+            headers: vec![("X-Pad".to_owned(), "a".repeat(66_000))],
             body: SKILL_MD.as_bytes().to_vec(),
         },
     )]);

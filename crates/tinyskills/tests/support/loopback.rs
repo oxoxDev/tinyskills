@@ -274,11 +274,12 @@ impl RegistryTransport for SocketTransport {
                 done: false,
             };
             let end = loop {
-                if let Some(end) = body.buffer.windows(4).position(|w| w == b"\r\n\r\n") {
-                    break end;
-                }
-                if body.buffer.len() > MAX_HEAD_BYTES {
+                let end = body.buffer.windows(4).position(|w| w == b"\r\n\r\n");
+                if end.unwrap_or(body.buffer.len()) > MAX_HEAD_BYTES {
                     return Err(TransportError::Io("head too large".to_owned()));
+                }
+                if let Some(end) = end {
+                    break end;
                 }
                 if !body.fill().await? {
                     return Err(TransportError::Io("eof in head".to_owned()));
