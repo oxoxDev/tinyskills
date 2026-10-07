@@ -140,6 +140,7 @@ impl RegistryTransport for ReqwestTransport {
             let host = url.host_str().unwrap_or_default().to_owned();
             let client = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
                 .connect_timeout(request.connect_timeout)
                 .resolve_to_addrs(&host, &request.pinned)
                 .build()
@@ -153,7 +154,7 @@ impl RegistryTransport for ReqwestTransport {
                 builder = builder.header(name, value);
             }
             let response = builder.send().await.map_err(|e| {
-                if e.is_timeout() { TransportError::Timeout } else { TransportError::Connect(e.to_string()) }
+                if e.is_timeout() { TransportError::Timeout } else { TransportError::Connect(e.without_url().to_string()) }
             })?;
             let headers = response
                 .headers()
@@ -170,7 +171,7 @@ struct ReqwestBody(reqwest::Response);
 impl BodyChunks for ReqwestBody {
     fn next_chunk(&mut self) -> BoxFuture<'_, Result<Option<Vec<u8>>, TransportError>> {
         Box::pin(async move {
-            self.0.chunk().await.map(|c| c.map(|b| b.to_vec())).map_err(|e| TransportError::Io(e.to_string()))
+            self.0.chunk().await.map(|c| c.map(|b| b.to_vec())).map_err(|e| TransportError::Io(e.without_url().to_string()))
         })
     }
 }
