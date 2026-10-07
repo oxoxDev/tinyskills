@@ -228,7 +228,7 @@ fn read_catalog(path: &Path, max_bytes: u64) -> Result<Option<StoredCatalog>, St
     }
     let file = std::fs::File::open(path).map_err(|error| StoreError::Io(error.to_string()))?;
     let mut bytes = Vec::new();
-    file.take(max_bytes + 1)
+    file.take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|error| StoreError::Io(error.to_string()))?;
     if bytes.len() as u64 > max_bytes {

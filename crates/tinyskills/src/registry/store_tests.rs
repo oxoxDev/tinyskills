@@ -82,6 +82,14 @@ async fn file_store_caps_reads() {
     );
 }
 
+#[tokio::test]
+async fn file_store_reads_with_an_unbounded_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileCatalogStore::new(dir.path()).with_max_bytes(u64::MAX);
+    store.save("r", &catalog()).await.unwrap();
+    assert_eq!(store.load("r").await.unwrap(), Some(catalog()));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn file_store_refuses_symlinks() {
