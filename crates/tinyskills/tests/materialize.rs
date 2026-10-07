@@ -3,6 +3,10 @@
 use std::fs;
 use std::path::Path;
 
+use std::sync::Arc;
+
+use tinyskills::cap_std::ambient_authority;
+use tinyskills::cap_std::fs::Dir;
 use tinyskills::{
     DiscoveryRoot, MAX_MATERIALIZE_FILE_BYTES, MaterializeEntry, MaterializeError,
     MaterializeReport, MaterializeSource, SkillScope, discover, materialize_tree,
@@ -17,11 +21,19 @@ fn document(dir_name: &str, text: &str) -> MaterializeEntry {
     }
 }
 
-fn bundle(dir_name: &str, src: &Path) -> MaterializeEntry {
-    MaterializeEntry {
+fn open(path: &Path) -> std::io::Result<Dir> {
+    Dir::open_ambient_dir(path, ambient_authority())
+}
+
+fn bundle(dir_name: &str, src: &Path) -> std::io::Result<MaterializeEntry> {
+    Ok(MaterializeEntry {
         dir_name: dir_name.to_string(),
-        source: MaterializeSource::Dir(src.to_path_buf()),
-    }
+        source: MaterializeSource::Dir(Arc::new(open(src)?)),
+    })
+}
+
+fn parent(root: &Path) -> std::io::Result<Dir> {
+    open(root.parent().unwrap_or(root))
 }
 
 fn names(root: &Path) -> std::io::Result<Vec<String>> {
@@ -45,9 +57,13 @@ fn documents_and_bundles_land_one_directory_each() -> TestResult {
     )?;
     fs::write(src.join("references/guide.md"), "guide")?;
     fs::write(src.join("references/deep/notes.txt"), "notes")?;
-    let root = temp.path().join("ws/skills");
+    let root = temp.path().join("skills");
 
-    let report = materialize_tree(&root, &[bundle("onboard", &src), document("my-skill", DOC)])?;
+    let report = materialize_tree(
+        &parent(&root)?,
+        "skills",
+        &[bundle("onboard", &src)?, document("my-skill", DOC)],
+    )?;
 
     assert_eq!(
         report,
@@ -75,11 +91,16 @@ fn documents_and_bundles_land_one_directory_each() -> TestResult {
 fn every_call_rebuilds_the_tree_so_a_dropped_skill_disappears() -> TestResult {
     let temp = tempfile::tempdir()?;
     let root = temp.path().join("skills");
-    materialize_tree(&root, &[document("a", DOC), document("b", DOC)])?;
+    materialize_tree(
+        &parent(&root)?,
+        "skills",
+        &[document("a", DOC), document("b", DOC)],
+    )?;
     fs::write(root.join("stray.txt"), "left behind")?;
 
     let report = materialize_tree(
-        &root,
+        &parent(&root)?,
+        "skills",
         &[document("b", "---\nname: B\ndescription: v2\n---\n")],
     )?;
 
@@ -96,9 +117,9 @@ fn every_call_rebuilds_the_tree_so_a_dropped_skill_disappears() -> TestResult {
 fn an_empty_set_leaves_an_empty_root() -> TestResult {
     let temp = tempfile::tempdir()?;
     let root = temp.path().join("skills");
-    materialize_tree(&root, &[document("a", DOC)])?;
+    materialize_tree(&parent(&root)?, "skills", &[document("a", DOC)])?;
 
-    let report = materialize_tree(&root, &[])?;
+    let report = materialize_tree(&parent(&root)?, "skills", &[])?;
     assert_eq!(report, MaterializeReport::default());
     assert!(root.is_dir());
     assert_eq!(names(&root)?, Vec::<String>::new());
@@ -121,7 +142,7 @@ fn symlinks_inside_a_bundle_are_skipped_not_followed() -> TestResult {
     std::os::unix::fs::symlink(&outside_dir, src.join("linked-dir"))?;
     let root = temp.path().join("skills");
 
-    let report = materialize_tree(&root, &[bundle("demo", &src)])?;
+    let report = materialize_tree(&parent(&root)?, "skills", &[bundle("demo", &src)?])?;
 
     assert_eq!(report.files, 1);
     assert_eq!(report.skipped_symlinks, 2);
@@ -141,7 +162,7 @@ fn non_regular_files_inside_a_bundle_are_not_copied() -> TestResult {
     let _listener = std::os::unix::net::UnixListener::bind(src.join("agent.sock"))?;
     let root = temp.path().join("skills");
 
-    let report = materialize_tree(&root, &[bundle("demo", &src)])?;
+    let report = materialize_tree(&parent(&root)?, "skills", &[bundle("demo", &src)?])?;
 
     assert_eq!(report.files, 1);
     assert_eq!(report.skipped_symlinks, 0);
@@ -153,10 +174,14 @@ fn non_regular_files_inside_a_bundle_are_not_copied() -> TestResult {
 fn an_unsafe_dir_name_is_refused_before_the_tree_is_touched() -> TestResult {
     let temp = tempfile::tempdir()?;
     let root = temp.path().join("skills");
-    materialize_tree(&root, &[document("keep", DOC)])?;
+    materialize_tree(&parent(&root)?, "skills", &[document("keep", DOC)])?;
 
     for bad in ["", ".", "..", "a/b", "a\\b", "has space", "../escape"] {
-        let error = materialize_tree(&root, &[document("fine", DOC), document(bad, DOC)]);
+        let error = materialize_tree(
+            &parent(&root)?,
+            "skills",
+            &[document("fine", DOC), document(bad, DOC)],
+        );
         assert!(
             matches!(&error, Err(MaterializeError::UnsafeDirName { dir_name }) if dir_name == bad),
             "{bad:?}: {error:?}"
@@ -170,9 +195,13 @@ fn an_unsafe_dir_name_is_refused_before_the_tree_is_touched() -> TestResult {
 fn a_duplicate_dir_name_is_refused_before_the_tree_is_touched() -> TestResult {
     let temp = tempfile::tempdir()?;
     let root = temp.path().join("skills");
-    materialize_tree(&root, &[document("keep", DOC)])?;
+    materialize_tree(&parent(&root)?, "skills", &[document("keep", DOC)])?;
 
-    let error = materialize_tree(&root, &[document("same", DOC), document("same", DOC)]);
+    let error = materialize_tree(
+        &parent(&root)?,
+        "skills",
+        &[document("same", DOC), document("same", DOC)],
+    );
     assert!(
         matches!(&error, Err(MaterializeError::DuplicateDirName { dir_name }) if dir_name == "same"),
         "{error:?}"
@@ -185,22 +214,36 @@ fn a_duplicate_dir_name_is_refused_before_the_tree_is_touched() -> TestResult {
 
 #[cfg(unix)]
 #[test]
-fn a_symlinked_source_directory_is_refused_and_nothing_is_copied() -> TestResult {
+fn a_host_opens_a_source_without_following_a_symlink() -> TestResult {
+    use tinyskills::cap_fs_ext::DirExt;
+
     let temp = tempfile::tempdir()?;
     let real = temp.path().join("real");
     fs::create_dir_all(&real)?;
-    fs::write(real.join("SKILL.md"), DOC)?;
-    let link = temp.path().join("link");
-    std::os::unix::fs::symlink(&real, &link)?;
-    let root = temp.path().join("skills");
+    std::os::unix::fs::symlink(&real, temp.path().join("link"))?;
 
-    let error = materialize_tree(&root, &[bundle("demo", &link)]);
+    assert!(open(temp.path())?.open_dir_nofollow("link").is_err());
+    assert!(open(temp.path())?.open_dir_nofollow("real").is_ok());
+    Ok(())
+}
+
+#[test]
+fn a_failed_rebuild_leaves_the_previous_tree_in_place() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("skills");
+    materialize_tree(&parent(&root)?, "skills", &[document("keep", DOC)])?;
+    let src = temp.path().join("bundle");
+    fs::create_dir_all(&src)?;
+    fs::File::create(src.join("big.bin"))?.set_len(MAX_MATERIALIZE_FILE_BYTES + 1)?;
+
+    let error = materialize_tree(&parent(&root)?, "skills", &[bundle("new", &src)?]);
 
     assert!(
-        matches!(&error, Err(MaterializeError::SymlinkedSource { path }) if *path == link),
+        matches!(error, Err(MaterializeError::FileTooLarge { .. })),
         "{error:?}"
     );
-    assert!(!root.join("demo/SKILL.md").exists());
+    assert_eq!(names(&root)?, ["keep"]);
+    assert_eq!(names(temp.path())?, ["bundle", "skills"]);
     Ok(())
 }
 
@@ -214,10 +257,10 @@ fn a_source_file_over_the_size_limit_is_refused() -> TestResult {
     fs::File::create(&big)?.set_len(MAX_MATERIALIZE_FILE_BYTES + 1)?;
     let root = temp.path().join("skills");
 
-    let error = materialize_tree(&root, &[bundle("demo", &src)]);
+    let error = materialize_tree(&parent(&root)?, "skills", &[bundle("demo", &src)?]);
 
     assert!(
-        matches!(&error, Err(MaterializeError::FileTooLarge { path, max }) if *path == big && *max == MAX_MATERIALIZE_FILE_BYTES),
+        matches!(&error, Err(MaterializeError::FileTooLarge { path, max }) if *path == Path::new("demo").join("big.bin") && *max == MAX_MATERIALIZE_FILE_BYTES),
         "{error:?}"
     );
     let message = error.map_or_else(|e| e.to_string(), |_| String::new());
@@ -233,7 +276,7 @@ fn a_source_file_at_the_size_limit_is_copied() -> TestResult {
     fs::File::create(src.join("edge.bin"))?.set_len(MAX_MATERIALIZE_FILE_BYTES)?;
     let root = temp.path().join("skills");
 
-    let report = materialize_tree(&root, &[bundle("demo", &src)])?;
+    let report = materialize_tree(&parent(&root)?, "skills", &[bundle("demo", &src)?])?;
 
     assert_eq!(report.files, 1);
     assert_eq!(

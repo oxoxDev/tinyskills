@@ -5,14 +5,19 @@
 //! that discovery and the resource readers then scan. [`materialize_tree`]
 //! rebuilds that tree from nothing on every call, so a skill dropped from the
 //! set disappears from disk.
+//!
+//! The function takes open directory handles ([`cap_std::fs::Dir`]) and no
+//! paths, so it resolves no path itself. Opening the destination's parent and
+//! each source directory is the caller's job, and whatever the caller's open
+//! resolved is what the function works on.
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
-use cap_std::ambient_authority;
 use cap_std::fs::{Dir, File, OpenOptions};
 
 use crate::catalog::is_safe_segment;
@@ -27,17 +32,17 @@ pub const MAX_MATERIALIZE_DEPTH: usize = 32;
 pub const MAX_MATERIALIZE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Where one materialized skill's content comes from.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum MaterializeSource {
-    /// A bundle directory, copied recursively: regular files and directories
-    /// only, symlinks skipped. The directory itself must not be a symlink.
-    Dir(PathBuf),
+    /// An open bundle directory, copied recursively: regular files and
+    /// directories only, symlinks skipped.
+    Dir(Arc<Dir>),
     /// One `SKILL.md` document, written as the only file.
     Document(String),
 }
 
 /// One skill to write under the tree's root.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct MaterializeEntry {
     /// The directory name under the root; must pass
     /// [`is_safe_segment`](crate::is_safe_segment).
@@ -61,6 +66,12 @@ pub struct MaterializeReport {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum MaterializeError {
+    /// The root name is not a single safe path segment.
+    #[error("`{root_name}` is not a safe skill tree name")]
+    UnsafeRootName {
+        /// The refused name.
+        root_name: String,
+    },
     /// An entry's directory name is not a single safe path segment.
     #[error("`{dir_name}` is not a safe skill directory name")]
     UnsafeDirName {
@@ -76,29 +87,16 @@ pub enum MaterializeError {
     /// A source directory nests deeper than [`MAX_MATERIALIZE_DEPTH`].
     #[error("{path} nests more than {max} directories deep")]
     TooDeep {
-        /// The first directory past the limit.
+        /// The first directory past the limit, relative to its entry's
+        /// directory name.
         path: PathBuf,
         /// The limit.
         max: usize,
     },
-    /// A source directory is the destination root, inside it, or contains it.
-    #[error("{source_dir} overlaps the destination {root}")]
-    OverlappingTrees {
-        /// The destination root.
-        root: PathBuf,
-        /// The overlapping source directory.
-        source_dir: PathBuf,
-    },
-    /// A source directory is itself a symlink.
-    #[error("{path} is a symlink; a bundle directory must be a real directory")]
-    SymlinkedSource {
-        /// The refused source directory.
-        path: PathBuf,
-    },
     /// A source file is larger than [`MAX_MATERIALIZE_FILE_BYTES`].
     #[error("{path} is larger than {max} bytes")]
     FileTooLarge {
-        /// The oversized file.
+        /// The oversized file, relative to its entry's directory name.
         path: PathBuf,
         /// The limit.
         max: u64,
@@ -108,7 +106,7 @@ pub enum MaterializeError {
     Io {
         /// The operation that failed.
         context: &'static str,
-        /// The path involved.
+        /// The path involved, relative to the tree's root.
         path: PathBuf,
         /// The underlying error.
         #[source]
@@ -116,46 +114,71 @@ pub enum MaterializeError {
     },
 }
 
-/// Replaces everything under `root` with one directory per entry.
+/// Replaces `root_name` inside `parent` with one directory per entry.
 ///
-/// Every `dir_name` is checked before anything on disk changes. Then `root`
-/// is removed (a symlink at `root` is removed, not followed) and recreated,
-/// and each entry is written to `root/<dir_name>/`: a
+/// `root_name` and every `dir_name` are checked before anything on disk
+/// changes. The new tree is written beside the old one and swapped in only
+/// once every entry has been written, so a failure leaves the previous tree
+/// in place and a source that lives inside the old tree is read before the
+/// old tree is removed. Each entry is written to `root_name/<dir_name>/`: a
 /// [`MaterializeSource::Document`] as its `SKILL.md`, a
 /// [`MaterializeSource::Dir`] as a recursive copy that skips symlinks and
-/// other non-regular files.
+/// other non-regular files and refuses files over
+/// [`MAX_MATERIALIZE_FILE_BYTES`].
 ///
-/// Source files larger than [`MAX_MATERIALIZE_FILE_BYTES`] are refused.
+/// Every operation is made relative to an open handle and never follows a
+/// symlink: a source entry swapped for a symlink while the copy runs fails the
+/// copy, and a symlink planted at `root_name` is removed, not followed. The
+/// function resolves no path, so the guarantee covers everything at or below
+/// `parent` and the source handles. How those handles were opened, including
+/// any symlink among the ancestors of the paths they came from, is the
+/// caller's. A directory replaced by another real directory by someone who can
+/// write to `parent` or a source cannot be told apart from the original.
 ///
-/// The ancestors of `root` and of each source directory are resolved once
-/// with [`std::fs::canonicalize`] (the nearest existing ancestor, for a
-/// destination that does not exist yet), then walked component by component
-/// through directory handles that never follow a symlink; missing destination
-/// ancestors are created the same way. Below that point every source and
-/// destination operation is made relative to an open handle and never follows
-/// a symlink: a source entry swapped for a symlink while the copy runs fails
-/// the copy, and replacing an ancestor, `root`, or any destination directory
-/// with a symlink after the canonicalization fails the call rather than
-/// writing through it.
+/// `parent` must not lie inside a source directory: the new tree would be
+/// copied into itself until [`MAX_MATERIALIZE_DEPTH`] is exceeded.
 ///
-/// Not covered: the canonicalization itself, and an ancestor directory being
-/// renamed to a different real directory after it.
+/// ```
+/// use std::sync::Arc;
+/// use tinyskills::cap_fs_ext::DirExt;
+/// use tinyskills::cap_std::{ambient_authority, fs::Dir};
+/// use tinyskills::{MaterializeEntry, MaterializeSource, materialize_tree};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let temp = tempfile::tempdir()?;
+/// std::fs::create_dir(temp.path().join("bundle"))?;
+/// std::fs::write(temp.path().join("bundle/SKILL.md"), "---\nname: A\ndescription: B\n---\n")?;
+///
+/// let base = Dir::open_ambient_dir(temp.path(), ambient_authority())?;
+/// let bundle = base.open_dir_nofollow("bundle")?;
+/// let entries = [MaterializeEntry {
+///     dir_name: "a".to_string(),
+///     source: MaterializeSource::Dir(Arc::new(bundle)),
+/// }];
+/// let report = materialize_tree(&base, "skills", &entries)?;
+/// assert_eq!(report.files, 1);
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// # Errors
 ///
-/// [`MaterializeError::UnsafeDirName`] or
-/// [`MaterializeError::DuplicateDirName`] before anything is touched;
-/// [`MaterializeError::OverlappingTrees`] when a source directory is `root`,
-/// inside it, or contains it; [`MaterializeError::SymlinkedSource`] when a
-/// source directory is a symlink; [`MaterializeError::FileTooLarge`] when a source file exceeds the
-/// limit; [`MaterializeError::TooDeep`] when a source nests past
-/// [`MAX_MATERIALIZE_DEPTH`]; [`MaterializeError::Io`] when clearing, creating,
-/// reading, or writing fails. A failure part-way leaves the tree partially
-/// written; the next call rebuilds it.
+/// [`MaterializeError::UnsafeRootName`], [`MaterializeError::UnsafeDirName`]
+/// or [`MaterializeError::DuplicateDirName`] before anything is touched;
+/// [`MaterializeError::FileTooLarge`] when a source file exceeds the limit;
+/// [`MaterializeError::TooDeep`] when a source nests past
+/// [`MAX_MATERIALIZE_DEPTH`]; [`MaterializeError::Io`] when clearing,
+/// creating, reading, or writing fails.
 pub fn materialize_tree(
-    root: &Path,
+    parent: &Dir,
+    root_name: &str,
     entries: &[MaterializeEntry],
 ) -> Result<MaterializeReport, MaterializeError> {
+    if !is_safe_segment(root_name) {
+        return Err(MaterializeError::UnsafeRootName {
+            root_name: root_name.to_string(),
+        });
+    }
     let mut seen = BTreeSet::new();
     for entry in entries {
         if !is_safe_segment(&entry.dir_name) {
@@ -170,30 +193,46 @@ pub fn materialize_tree(
         }
     }
 
-    reject_overlap(root, entries)?;
-    let tree = DestDir::replace_root(root)?;
+    let staging = format!(".{root_name}.materializing");
+    remove_entry(parent, &staging)?;
+    let built = build(parent, &staging, entries);
+    if built.is_err() {
+        let _ = remove_entry(parent, &staging);
+    }
+    let report = built?;
 
+    remove_entry(parent, root_name)?;
+    at(
+        "replacing",
+        Path::new(root_name),
+        parent.rename(&staging, parent, root_name),
+    )?;
+    Ok(report)
+}
+
+fn build(
+    parent: &Dir,
+    staging: &str,
+    entries: &[MaterializeEntry],
+) -> Result<MaterializeReport, MaterializeError> {
+    let tree = at(
+        "creating skill tree",
+        Path::new(staging),
+        create_dir(parent, OsStr::new(staging)),
+    )?;
     let mut report = MaterializeReport::default();
     for entry in entries {
-        let dest = root.join(&entry.dir_name);
+        let rel = Path::new(&entry.dir_name);
+        let out = at(
+            "creating",
+            rel,
+            create_dir(&tree, OsStr::new(&entry.dir_name)),
+        )?;
         match &entry.source {
-            MaterializeSource::Dir(src) => {
-                let source = SourceDir::open_root(src)?;
-                let out = at(
-                    "creating",
-                    &dest,
-                    tree.create_dir(OsStr::new(&entry.dir_name)),
-                )?;
-                copy_dir(&source, src, &out, &dest, 0, &mut report)?;
-            }
+            MaterializeSource::Dir(source) => copy_dir(source, &out, rel, 0, &mut report)?,
             MaterializeSource::Document(document) => {
-                let out = at(
-                    "creating skill dir",
-                    &dest,
-                    tree.create_dir(OsStr::new(&entry.dir_name)),
-                )?;
-                let file = dest.join(SKILL_MD);
-                let mut handle = at("creating", &file, out.create_file(OsStr::new(SKILL_MD)))?;
+                let file = rel.join(SKILL_MD);
+                let mut handle = at("creating", &file, create_file(&out, OsStr::new(SKILL_MD)))?;
                 at("writing", &file, handle.write_all(document.as_bytes()))?;
                 report.files += 1;
             }
@@ -203,92 +242,56 @@ pub fn materialize_tree(
     Ok(report)
 }
 
-fn reject_overlap(root: &Path, entries: &[MaterializeEntry]) -> Result<(), MaterializeError> {
-    let mut sources = entries
-        .iter()
-        .filter_map(|entry| match &entry.source {
-            MaterializeSource::Dir(src) => Some(src),
-            MaterializeSource::Document(_) => None,
-        })
-        .peekable();
-    if sources.peek().is_none() {
-        return Ok(());
+fn remove_entry(parent: &Dir, name: &str) -> Result<(), MaterializeError> {
+    let rel = Path::new(name);
+    match parent.symlink_metadata(name) {
+        Ok(metadata) if metadata.is_dir() => at("clearing", rel, parent.remove_dir_all(name)),
+        Ok(_) => at("clearing", rel, parent.remove_file_or_symlink(name)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io("reading", rel, error)),
     }
-    let target = canonical_target(root);
-    for src in sources {
-        let Ok(resolved) = std::fs::canonicalize(src) else {
-            continue;
-        };
-        if resolved.starts_with(&target) || target.starts_with(&resolved) {
-            return Err(MaterializeError::OverlappingTrees {
-                root: root.to_path_buf(),
-                source_dir: src.clone(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn canonical_target(root: &Path) -> PathBuf {
-    let mut missing = Vec::new();
-    let mut existing = root;
-    while let Some((parent, name)) = parent_and_name(existing) {
-        if let Ok(base) = std::fs::canonicalize(existing) {
-            return missing
-                .iter()
-                .rev()
-                .fold(base, |path, name| path.join(name));
-        }
-        missing.push(name);
-        existing = parent;
-    }
-    root.to_path_buf()
 }
 
 fn copy_dir(
-    source: &SourceDir,
-    src: &Path,
-    out: &DestDir,
-    dest: &Path,
+    source: &Dir,
+    out: &Dir,
+    rel: &Path,
     depth: usize,
     report: &mut MaterializeReport,
 ) -> Result<(), MaterializeError> {
-    for entry in at("reading", src, source.entries())? {
-        let (name, kind) = at("reading", src, entry)?;
-        let from = src.join(&name);
-        let to = dest.join(&name);
-        match kind {
-            EntryKind::Symlink => report.skipped_symlinks += 1,
-            EntryKind::Dir => {
-                if depth >= MAX_MATERIALIZE_DEPTH {
-                    return Err(MaterializeError::TooDeep {
-                        path: from,
-                        max: MAX_MATERIALIZE_DEPTH,
-                    });
-                }
-                let child = at("reading", &from, source.open_dir(&name))?;
-                let child_out = at("creating", &to, out.create_dir(&name))?;
-                copy_dir(&child, &from, &child_out, &to, depth + 1, report)?;
+    for entry in at("reading", rel, source.entries())? {
+        let entry = at("reading", rel, entry)?;
+        let name = entry.file_name();
+        let from = rel.join(&name);
+        let file_type = at("reading", &from, entry.file_type())?;
+        if file_type.is_symlink() {
+            report.skipped_symlinks += 1;
+        } else if file_type.is_dir() {
+            if depth >= MAX_MATERIALIZE_DEPTH {
+                return Err(MaterializeError::TooDeep {
+                    path: from,
+                    max: MAX_MATERIALIZE_DEPTH,
+                });
             }
-            EntryKind::File => {
-                if copy_file(source, &name, &from, out, &to)? {
-                    report.files += 1;
-                }
-            }
-            EntryKind::Other => {}
+            let child = at("reading", &from, source.open_dir_nofollow(&name))?;
+            let child_out = at("creating", &from, create_dir(out, &name))?;
+            copy_dir(&child, &child_out, &from, depth + 1, report)?;
+        } else if file_type.is_file() && copy_file(source, out, &name, &from)? {
+            report.files += 1;
         }
     }
     Ok(())
 }
 
 fn copy_file(
-    source: &SourceDir,
-    name: &OsStr,
+    source: &Dir,
+    out: &Dir,
+    name: &OsString,
     from: &Path,
-    out: &DestDir,
-    to: &Path,
 ) -> Result<bool, MaterializeError> {
-    let file = at("copying", from, source.open_file(name))?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = at("copying", from, source.open_with(name, &options))?;
     let metadata = at("copying", from, file.metadata())?;
     if !metadata.is_file() {
         return Ok(false);
@@ -300,7 +303,7 @@ fn copy_file(
     if metadata.len() > MAX_MATERIALIZE_FILE_BYTES {
         return Err(too_large());
     }
-    let mut handle = at("creating", to, out.create_file(name))?;
+    let mut handle = at("creating", from, create_file(out, name))?;
     let copied = at(
         "copying",
         from,
@@ -312,176 +315,18 @@ fn copy_file(
     Ok(true)
 }
 
-enum EntryKind {
-    Dir,
-    File,
-    Symlink,
-    Other,
+fn create_dir(parent: &Dir, name: &OsStr) -> std::io::Result<Dir> {
+    parent.create_dir(name)?;
+    parent.open_dir_nofollow(name)
 }
 
-struct SourceDir(Dir);
-
-impl SourceDir {
-    fn open_root(path: &Path) -> Result<Self, MaterializeError> {
-        let metadata = at("reading", path, std::fs::symlink_metadata(path))?;
-        if metadata.file_type().is_symlink() {
-            return Err(MaterializeError::SymlinkedSource {
-                path: path.to_path_buf(),
-            });
-        }
-        Ok(Self(at("reading", path, open_dir_nofollow_at(path))?))
-    }
-
-    fn open_dir(&self, name: &OsStr) -> std::io::Result<Self> {
-        Ok(Self(self.0.open_dir_nofollow(name)?))
-    }
-
-    fn open_file(&self, name: &OsStr) -> std::io::Result<File> {
-        let mut options = OpenOptions::new();
-        options.read(true).follow(FollowSymlinks::No);
-        self.0.open_with(name, &options)
-    }
-
-    fn entries(
-        &self,
-    ) -> std::io::Result<impl Iterator<Item = std::io::Result<(OsString, EntryKind)>>> {
-        Ok(self.0.entries()?.map(|entry| {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            let kind = if file_type.is_symlink() {
-                EntryKind::Symlink
-            } else if file_type.is_dir() {
-                EntryKind::Dir
-            } else if file_type.is_file() {
-                EntryKind::File
-            } else {
-                EntryKind::Other
-            };
-            Ok((entry.file_name(), kind))
-        }))
-    }
-}
-
-struct DestDir(Dir);
-
-impl DestDir {
-    fn replace_root(root: &Path) -> Result<Self, MaterializeError> {
-        let (parent_path, name) =
-            parent_and_name(root).ok_or_else(|| io("creating skill tree", root, invalid_root()))?;
-        let parent = at(
-            "creating skill tree",
-            parent_path,
-            open_anchored(parent_path, true),
-        )?;
-        match parent.symlink_metadata(name) {
-            Ok(metadata) if metadata.is_dir() => {
-                at("clearing skill tree", root, parent.remove_dir_all(name))?;
-            }
-            Ok(_) => at(
-                "clearing skill tree",
-                root,
-                parent.remove_file_or_symlink(name),
-            )?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io("reading skill tree", root, error)),
-        }
-        at("creating skill tree", root, parent.create_dir(name))?;
-        let dir = at("creating skill tree", root, parent.open_dir_nofollow(name))?;
-        Ok(Self(dir))
-    }
-
-    fn create_dir(&self, name: &OsStr) -> std::io::Result<Self> {
-        self.0.create_dir(name)?;
-        Ok(Self(self.0.open_dir_nofollow(name)?))
-    }
-
-    fn create_file(&self, name: &OsStr) -> std::io::Result<File> {
-        let mut options = OpenOptions::new();
-        options
-            .write(true)
-            .create_new(true)
-            .follow(FollowSymlinks::No);
-        self.0.open_with(name, &options)
-    }
-}
-
-fn parent_and_name(path: &Path) -> Option<(&Path, &OsStr)> {
-    let name = path.file_name()?;
-    let parent = path.parent()?;
-    let parent = if parent.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        parent
-    };
-    Some((parent, name))
-}
-
-fn invalid_root() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "path has no final component",
-    )
-}
-
-fn open_dir_nofollow_at(path: &Path) -> std::io::Result<Dir> {
-    let (parent, name) = parent_and_name(path).ok_or_else(invalid_root)?;
-    open_anchored(parent, false)?.open_dir_nofollow(name)
-}
-
-fn open_anchored(path: &Path, create: bool) -> std::io::Result<Dir> {
-    let mut missing = Vec::new();
-    let mut existing = path.to_path_buf();
-    let base = loop {
-        match std::fs::canonicalize(&existing) {
-            Ok(base) => break base,
-            Err(error) if create && error.kind() == std::io::ErrorKind::NotFound => {
-                let (parent, name) = parent_and_name(&existing).ok_or_else(invalid_root)?;
-                if !matches!(
-                    Path::new(name).components().next(),
-                    Some(Component::Normal(_))
-                ) {
-                    return Err(invalid_root());
-                }
-                missing.push(name.to_owned());
-                existing = parent.to_path_buf();
-            }
-            Err(error) => return Err(error),
-        }
-    };
-    let mut dir = open_chain(&base)?;
-    for name in missing.iter().rev() {
-        match dir.create_dir(name) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-        dir = dir.open_dir_nofollow(name)?;
-    }
-    Ok(dir)
-}
-
-fn open_chain(path: &Path) -> std::io::Result<Dir> {
-    let mut head = PathBuf::new();
-    let mut components = path.components().peekable();
-    while let Some(component) = components.next_if(|component| {
-        matches!(
-            component,
-            Component::Prefix(_) | Component::RootDir | Component::CurDir
-        )
-    }) {
-        head.push(component);
-    }
-    if head.as_os_str().is_empty() {
-        head.push(".");
-    }
-    let mut dir = Dir::open_ambient_dir(&head, ambient_authority())?;
-    for component in components {
-        let Component::Normal(name) = component else {
-            return Err(invalid_root());
-        };
-        dir = dir.open_dir_nofollow(name)?;
-    }
-    Ok(dir)
+fn create_file(parent: &Dir, name: &OsStr) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    parent.open_with(name, &options)
 }
 
 fn at<T>(

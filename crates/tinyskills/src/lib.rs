@@ -74,3 +74,7 @@ pub use scan::{
 };
 pub use slug::{PunctuationRule, SlugError, SlugRules, slugify_with, validate_slug};
 pub use trigger::TriggerPattern;
+
+/// Re-exported so a host opens the directory handles [`materialize_tree`] takes
+/// with the same `cap-std` and `cap-fs-ext` versions.
+pub use {cap_fs_ext, cap_std};
