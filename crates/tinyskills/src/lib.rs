@@ -20,6 +20,8 @@ mod flat;
 mod install;
 mod materialize;
 mod model;
+#[cfg(feature = "registry")]
+mod registry;
 mod remove;
 mod resource;
 mod scan;
@@ -66,6 +68,8 @@ pub use model::{
     MAX_DESCRIPTION_LEN, MAX_DOCUMENT_BYTES, MAX_NAME_LEN, MAX_RESOURCE_BYTES, RESOURCE_DIRS,
     SKILL_JSON, SKILL_MD, Skill, SkillFrontmatter, SkillScope, WORKFLOW_MD,
 };
+#[cfg(feature = "registry")]
+pub use registry::*;
 pub use remove::{RemoveError, remove_bundle};
 pub use resource::{ResourceError, read_resource, resolve_skill};
 pub use scan::{
