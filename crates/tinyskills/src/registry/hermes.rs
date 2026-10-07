@@ -619,3 +619,7 @@ impl<'de> Visitor<'de> for LenientListVisitor {
         Ok(LenientList::default())
     }
 }
+
+#[cfg(test)]
+#[path = "hermes_tests.rs"]
+mod tests;
