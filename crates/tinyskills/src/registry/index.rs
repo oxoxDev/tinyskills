@@ -66,6 +66,10 @@ impl CatalogIndex {
         }
     }
 
+    pub(crate) fn entries(&self) -> &[RegistryEntry] {
+        &self.entries
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }

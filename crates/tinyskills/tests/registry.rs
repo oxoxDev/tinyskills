@@ -601,10 +601,42 @@ async fn file_store_persists_between_registries() {
             .header("if-none-match"),
         Some("\"v1\"")
     );
+    third.refresh(None, false).await.unwrap();
     assert_eq!(
         third.search(&query("")).await.unwrap().freshness,
         Freshness::Live
     );
+}
+
+#[tokio::test]
+async fn not_modified_revalidation_persists_the_new_timestamp() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = Rig::new();
+    let first = rig
+        .builder()
+        .store(FileCatalogStore::new(dir.path()))
+        .build();
+    first.search(&query("")).await.unwrap();
+
+    rig.clock.advance(TTL * 2);
+    rig.transport
+        .route(HttpMethod::Get, INDEX, vec![Reply::status(304, Vec::new())]);
+    let second = rig
+        .builder()
+        .store(FileCatalogStore::new(dir.path()))
+        .build();
+    second.refresh(None, false).await.unwrap();
+    assert_eq!(rig.index_calls(), 2);
+
+    let third = rig
+        .builder()
+        .store(FileCatalogStore::new(dir.path()))
+        .build();
+    let page = third.search(&query("")).await.unwrap();
+    assert_eq!(page.total, fixture_len());
+    assert_eq!(page.freshness, Freshness::Live);
+    assert_eq!(page.fetched_at, Some(rig.clock.unix()));
+    assert_eq!(rig.index_calls(), 2);
 }
 
 #[tokio::test]

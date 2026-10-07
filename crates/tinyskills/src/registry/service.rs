@@ -304,15 +304,34 @@ impl Shared {
                 Ok(())
             }
             Ok(SourceLoad::NotModified) => {
-                let mut state = slot.write();
-                if state.index.is_none() {
+                let held = {
+                    let state = slot.read();
+                    state
+                        .index
+                        .as_ref()
+                        .map(|index| (Arc::clone(index), state.validators.clone(), state.skipped))
+                };
+                let Some((index, validators, skipped)) = held else {
                     return Err(RegistryError::Malformed {
                         what: "catalog",
                         detail: "not modified, but no catalog is held".to_owned(),
                     });
+                };
+                let mut store_error = None;
+                if !slot.is_local() {
+                    let stored = StoredCatalog::new(
+                        index.entries().to_vec(),
+                        unix_secs(now),
+                        validators,
+                        skipped,
+                    );
+                    if let Err(error) = self.store.save(&slot.descriptor.id, &stored).await {
+                        store_error = Some(RegistryError::Store(error));
+                    }
                 }
+                let mut state = slot.write();
                 state.fetched_at = Some(now);
-                state.last_error = None;
+                state.last_error = store_error;
                 state.cooldown_until = None;
                 Ok(())
             }
