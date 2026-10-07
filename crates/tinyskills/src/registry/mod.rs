@@ -16,6 +16,7 @@ mod contract;
 mod error;
 mod fetch;
 mod hermes;
+mod index;
 mod source;
 mod static_source;
 mod transport;
