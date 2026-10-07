@@ -30,3 +30,7 @@ pub fn normalize_registry_document_url(raw: &str) -> Result<String, InstallError
     }
     normalize_install_url(raw)
 }
+
+#[cfg(test)]
+#[path = "url_tests.rs"]
+mod tests;
