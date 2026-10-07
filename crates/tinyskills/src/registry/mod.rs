@@ -17,6 +17,7 @@ mod error;
 mod fetch;
 mod hermes;
 mod index;
+mod service;
 mod source;
 mod static_source;
 mod store;
@@ -34,6 +35,7 @@ pub use fetch::{
     fetch_skill_document,
 };
 pub use hermes::HermesIndexSource;
+pub use service::{SkillRegistry, SkillRegistryBuilder};
 pub use source::{SkillSource, SourceContext, SourceDescriptor, SourceLoad};
 pub use static_source::StaticSource;
 pub use store::{

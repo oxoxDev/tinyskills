@@ -189,3 +189,33 @@ pub(crate) fn direct_download_url(entry: &RegistryEntry) -> Result<String, Regis
         })
     }
 }
+
+impl<T: SkillSource + ?Sized> SkillSource for Arc<T> {
+    fn descriptor(&self) -> SourceDescriptor {
+        (**self).descriptor()
+    }
+
+    fn load<'a>(
+        &'a self,
+        ctx: &'a SourceContext,
+        prior: Option<&'a Validators>,
+    ) -> BoxFuture<'a, Result<SourceLoad, RegistryError>> {
+        (**self).load(ctx, prior)
+    }
+
+    fn resolve_document_url<'a>(
+        &'a self,
+        ctx: &'a SourceContext,
+        entry: &'a RegistryEntry,
+    ) -> BoxFuture<'a, Result<String, RegistryError>> {
+        (**self).resolve_document_url(ctx, entry)
+    }
+
+    fn document_status_error(&self, entry: &RegistryEntry, status: u16) -> Option<RegistryError> {
+        (**self).document_status_error(entry, status)
+    }
+
+    fn is_local(&self) -> bool {
+        (**self).is_local()
+    }
+}
