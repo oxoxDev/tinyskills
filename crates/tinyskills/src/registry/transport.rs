@@ -207,3 +207,7 @@ pub(crate) fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Op
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
         .map(|(_, value)| value.as_str())
 }
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod tests;
