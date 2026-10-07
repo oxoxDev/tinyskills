@@ -61,12 +61,22 @@ impl Default for StoredCatalog {
 /// Where fetched catalogs persist between runs.
 pub trait CatalogStore: Send + Sync {
     /// The stored catalog for `registry`, or `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the catalog cannot be read due to
+    /// I/O error, file format issues, or symlink safety violations.
     fn load<'a>(
         &'a self,
         registry: &'a str,
     ) -> BoxFuture<'a, Result<Option<StoredCatalog>, StoreError>>;
 
     /// Replace the stored catalog for `registry`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the catalog cannot be written due to
+    /// I/O error, directory creation failure, or symlink safety violations.
     fn save<'a>(
         &'a self,
         registry: &'a str,
