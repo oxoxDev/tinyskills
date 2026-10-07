@@ -14,6 +14,8 @@ use tinyskills::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const MAX_HEAD_BYTES: usize = 64 * 1024;
+
 #[derive(Clone)]
 pub(crate) enum Script {
     Plain {
@@ -115,7 +117,7 @@ fn serve(stream: TcpStream, routes: &HashMap<String, Script>, log: &Mutex<Vec<St
             let mut result = out.write_all(
                 b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
             );
-            for part in parts {
+            for part in parts.into_iter().filter(|part| !part.is_empty()) {
                 result = result
                     .and_then(|()| out.write_all(format!("{:x}\r\n", part.len()).as_bytes()))
                     .and_then(|()| out.write_all(&part))
@@ -274,6 +276,9 @@ impl RegistryTransport for SocketTransport {
             let end = loop {
                 if let Some(end) = body.buffer.windows(4).position(|w| w == b"\r\n\r\n") {
                     break end;
+                }
+                if body.buffer.len() > MAX_HEAD_BYTES {
+                    return Err(TransportError::Io("head too large".to_owned()));
                 }
                 if !body.fill().await? {
                     return Err(TransportError::Io("eof in head".to_owned()));
