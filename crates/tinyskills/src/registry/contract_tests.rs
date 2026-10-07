@@ -111,3 +111,12 @@ fn entries_compare_and_convert() {
     assert_eq!(detail.overview, "o");
     assert_eq!(detail.install_identifier.as_deref(), Some("i"));
 }
+
+#[test]
+fn error_summary_deserializes_with_defaults() {
+    let summary: RegistryErrorSummary = serde_json::from_str("{}").unwrap();
+    assert_eq!(summary, RegistryErrorSummary::default());
+    assert_eq!(summary.kind, RegistryErrorKind::Unavailable);
+    assert_eq!(summary.message, "");
+    assert_eq!(summary.retry_after_secs, None);
+}

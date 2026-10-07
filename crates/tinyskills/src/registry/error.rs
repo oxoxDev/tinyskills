@@ -138,13 +138,14 @@ pub enum StoreError {
 }
 
 /// The stable, serializable kind of a [`RegistryError`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RegistryErrorKind {
     /// [`RegistryError::Timeout`].
     Timeout,
     /// [`RegistryError::Unavailable`].
+    #[default]
     Unavailable,
     /// [`RegistryError::RateLimited`].
     RateLimited,

@@ -285,7 +285,8 @@ pub struct SkillPage {
 }
 
 /// A summary of a stored failure, safe to show.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 #[non_exhaustive]
 pub struct RegistryErrorSummary {
     /// The stable kind.
@@ -293,7 +294,6 @@ pub struct RegistryErrorSummary {
     /// The error message.
     pub message: String,
     /// The delay a throttling upstream asked for, in seconds.
-    #[serde(default)]
     pub retry_after_secs: Option<u64>,
 }
 
