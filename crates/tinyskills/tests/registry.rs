@@ -383,6 +383,9 @@ async fn cooldown_honours_retry_after() {
     let error = registry.search(&query("")).await.unwrap_err();
     assert_eq!(error.retry_after(), Some(Duration::from_secs(600)));
     assert_eq!(rig.index_calls(), 1);
+    let statuses = registry.refresh(None, true).await.unwrap();
+    assert_eq!(statuses[0].entry_count, 0);
+    assert_eq!(rig.index_calls(), 1);
     let status = &registry.sources()[0];
     assert_eq!(status.freshness, None);
     assert_eq!(
@@ -477,7 +480,10 @@ async fn static_sources_search_beside_remote_ones() {
 #[tokio::test]
 async fn refresh_and_warm_report_status() {
     let rig = Rig::new();
-    let registry = rig.registry();
+    let builder = rig.builder().ttl(TTL).featured(["x"]);
+    assert!(format!("{builder:?}").contains("featured"));
+    let registry = builder.build();
+    assert!(format!("{registry:?}").contains("hermes"));
     assert_eq!(registry.sources()[0].freshness, None);
     assert_eq!(registry.sources()[0].label, "hermes");
 
