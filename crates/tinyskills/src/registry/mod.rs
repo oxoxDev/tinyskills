@@ -13,8 +13,10 @@
 //! bounds every body and every operation.
 
 mod transport;
+mod url;
 
 pub use transport::{
     BodyChunks, BoxFuture, HttpMethod, RegistryTransport, Resolver, SystemResolver, TransportError,
     TransportRequest, TransportResponse,
 };
+pub use url::normalize_registry_document_url;
