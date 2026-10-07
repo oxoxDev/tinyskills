@@ -282,3 +282,7 @@ impl Clock for SystemClock {
         SystemTime::now()
     }
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;
