@@ -213,3 +213,7 @@ fn haystack(entry: &CatalogEntry) -> String {
     }
     text
 }
+
+#[cfg(test)]
+#[path = "index_tests.rs"]
+mod tests;
