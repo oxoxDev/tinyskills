@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::fs::{Dir, OpenOptions};
 use serde::{Deserialize, Serialize};
 
 use super::contract::{RegistryEntry, Validators};
@@ -147,6 +149,12 @@ impl CatalogStore for MemoryCatalogStore {
 /// A file in another format reads as absent. A registry id that is not a
 /// plain path segment, a symlinked file or store directory and a file over
 /// the read limit are refused.
+///
+/// On every platform the store directory is opened as a handle without
+/// following a symlink at its last component, and every catalog file is
+/// opened and created relative to that handle without following a symlink.
+/// How the store directory's ancestors resolve, including any symlink among
+/// them, is the caller's.
 #[derive(Debug, Clone)]
 pub struct FileCatalogStore {
     dir: PathBuf,
@@ -173,11 +181,11 @@ impl FileCatalogStore {
         self
     }
 
-    fn path(&self, registry: &str) -> Result<PathBuf, StoreError> {
+    fn file_name(registry: &str) -> Result<String, StoreError> {
         if !is_safe_segment(registry) {
             return Err(StoreError::InvalidId(registry.to_owned()));
         }
-        Ok(self.dir.join(format!("{registry}.json")))
+        Ok(format!("{registry}.json"))
     }
 }
 
@@ -186,14 +194,19 @@ impl CatalogStore for FileCatalogStore {
         &'a self,
         registry: &'a str,
     ) -> BoxFuture<'a, Result<Option<StoredCatalog>, StoreError>> {
-        let path = self.path(registry);
+        let name = Self::file_name(registry);
         let max_bytes = self.max_bytes;
         let dir = self.dir.clone();
         Box::pin(async move {
-            let path = path?;
+            let name = name?;
             blocking(move || {
                 refuse_symlinked_root(&dir)?;
-                read_catalog(&path, max_bytes)
+                let Some(root) = open_store_dir(&dir, false)
+                    .map_err(|error| StoreError::Io(error.to_string()))?
+                else {
+                    return Ok(None);
+                };
+                read_catalog(&root, &name, max_bytes)
             })
             .await
         })
@@ -204,13 +217,13 @@ impl CatalogStore for FileCatalogStore {
         registry: &'a str,
         catalog: &'a StoredCatalog,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
-        let path = self.path(registry);
+        let name = Self::file_name(registry);
         let dir = self.dir.clone();
         Box::pin(async move {
-            let path = path?;
+            let name = name?;
             let bytes =
                 serde_json::to_vec(catalog).map_err(|error| StoreError::Io(error.to_string()))?;
-            blocking(move || write_catalog(&dir, &path, &bytes)).await
+            blocking(move || write_catalog(&dir, &name, &bytes)).await
         })
     }
 }
@@ -229,8 +242,12 @@ struct FormatProbe {
     format: u32,
 }
 
-fn read_catalog(path: &Path, max_bytes: u64) -> Result<Option<StoredCatalog>, StoreError> {
-    let metadata = match std::fs::symlink_metadata(path) {
+fn read_catalog(
+    root: &Dir,
+    name: &str,
+    max_bytes: u64,
+) -> Result<Option<StoredCatalog>, StoreError> {
+    let metadata = match root.symlink_metadata(name) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(StoreError::Io(error.to_string())),
@@ -241,7 +258,11 @@ fn read_catalog(path: &Path, max_bytes: u64) -> Result<Option<StoredCatalog>, St
     if metadata.len() > max_bytes {
         return Err(StoreError::TooLarge { limit: max_bytes });
     }
-    let file = open_no_follow(path).map_err(|error| StoreError::Io(error.to_string()))?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = root
+        .open_with(name, &options)
+        .map_err(|error| StoreError::Io(error.to_string()))?;
     let mut bytes = Vec::new();
     file.take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -268,57 +289,70 @@ fn refuse_symlinked_root(dir: &Path) -> Result<(), StoreError> {
     }
 }
 
-fn write_catalog(dir: &Path, path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
+fn open_store_dir(dir: &Path, create: bool) -> std::io::Result<Option<Dir>> {
+    let absent = |error: std::io::Error| {
+        if !create && error.kind() == std::io::ErrorKind::NotFound {
+            Ok(None)
+        } else {
+            Err(error)
+        }
+    };
+    let Some(name) = dir.file_name() else {
+        if create {
+            std::fs::create_dir_all(dir)?;
+        }
+        return Dir::open_ambient_dir(dir, cap_std::ambient_authority())
+            .map_or_else(absent, |root| Ok(Some(root)));
+    };
+    let parent = match dir.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    if create {
+        std::fs::create_dir_all(parent)?;
+    }
+    let parent = match Dir::open_ambient_dir(parent, cap_std::ambient_authority()) {
+        Ok(parent) => parent,
+        Err(error) => return absent(error),
+    };
+    if create {
+        match parent.create_dir(name) {
+            Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => return Err(error),
+            _ => {}
+        }
+    }
+    parent
+        .open_dir_nofollow(name)
+        .map_or_else(absent, |root| Ok(Some(root)))
+}
+
+fn write_catalog(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), StoreError> {
     refuse_symlinked_root(dir)?;
-    std::fs::create_dir_all(dir).map_err(|error| StoreError::Io(error.to_string()))?;
+    let root = open_store_dir(dir, true)
+        .and_then(|root| root.ok_or_else(|| std::io::ErrorKind::NotFound.into()))
+        .map_err(|error| StoreError::Io(error.to_string()))?;
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let mut temp = path.as_os_str().to_owned();
-    temp.push(format!(".tmp.{}.{nanos}", std::process::id()));
-    let temp = PathBuf::from(temp);
-    let mut file = match create_exclusive(&temp) {
-        Ok(file) => file,
-        Err(error) => return Err(StoreError::Io(error.to_string())),
-    };
+    let temp = format!("{name}.tmp.{}.{nanos}", std::process::id());
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    let mut file = root
+        .open_with(&temp, &options)
+        .map_err(|error| StoreError::Io(error.to_string()))?;
     let result = file
         .write_all(bytes)
         .and_then(|()| file.sync_all())
-        .and_then(|()| std::fs::rename(&temp, path));
+        .and_then(|()| root.rename(&temp, &root, name));
     if let Err(error) = result {
-        let _ = std::fs::remove_file(&temp);
+        let _ = root.remove_file(&temp);
         return Err(StoreError::Io(error.to_string()));
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn no_follow_flag() -> i32 {
-    use rustix::fs::OFlags;
-    i32::try_from(OFlags::NOFOLLOW.bits()).unwrap_or(0)
-}
-
-fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(no_follow_flag());
-    }
-    options.open(path)
-}
-
-fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(no_follow_flag());
-    }
-    options.open(path)
 }
 
 /// The registry's notion of now, for ages and cooldowns.

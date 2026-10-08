@@ -136,35 +136,104 @@ fn shared_clocks_delegate() {
     assert_eq!(std::sync::Arc::new(Fixed(at)).now(), at);
 }
 
+#[cfg(unix)]
 #[test]
-fn exclusive_create_refuses_existing_paths() {
+fn the_store_handle_refuses_a_symlinked_root_on_its_own() {
     let dir = tempfile::tempdir().unwrap();
-    let existing = dir.path().join("existing");
-    std::fs::write(&existing, b"keep").unwrap();
-    assert!(create_exclusive(&existing).is_err());
-    assert_eq!(std::fs::read(&existing).unwrap(), b"keep");
+    let real = dir.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert!(open_store_dir(&link, false).is_err());
+    assert!(open_store_dir(&link, true).is_err());
+    assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn file_store_follows_a_symlinked_ancestor() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let store = FileCatalogStore::new(link.join("store"));
+    store.save("r", &catalog()).await.unwrap();
+    assert_eq!(store.load("r").await.unwrap(), Some(catalog()));
+    assert!(real.join("store").join("r.json").is_file());
 }
 
 #[cfg(unix)]
 #[test]
-fn exclusive_create_does_not_follow_a_symlink() {
+fn reads_refuse_a_symlinked_file_through_the_handle() {
     let dir = tempfile::tempdir().unwrap();
-    let target = dir.path().join("target");
-    std::fs::write(&target, b"keep").unwrap();
-    let link = dir.path().join("link");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-    assert!(create_exclusive(&link).is_err());
-    assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+    std::fs::write(dir.path().join("target.json"), b"{}").unwrap();
+    std::os::unix::fs::symlink("target.json", dir.path().join("r.json")).unwrap();
+    let root = open_store_dir(dir.path(), false).unwrap().unwrap();
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    assert!(root.open_with("r.json", &options).is_err());
 }
 
-#[cfg(unix)]
-#[test]
-fn open_no_follow_refuses_a_symlink() {
+#[tokio::test]
+async fn file_store_accepts_a_root_with_no_file_name() {
     let dir = tempfile::tempdir().unwrap();
-    let target = dir.path().join("target");
-    std::fs::write(&target, b"data").unwrap();
-    let link = dir.path().join("link");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-    assert!(open_no_follow(&link).is_err());
-    assert!(open_no_follow(&target).is_ok());
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    let root = dir.path().join("sub").join("..");
+    assert_eq!(root.file_name(), None);
+    let store = FileCatalogStore::new(&root);
+    store.save("r", &catalog()).await.unwrap();
+    assert_eq!(store.load("r").await.unwrap(), Some(catalog()));
+    assert!(dir.path().join("r.json").is_file());
+    assert!(
+        open_store_dir(&dir.path().join("missing").join(".."), false)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn file_store_loads_nothing_under_a_missing_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileCatalogStore::new(dir.path().join("missing").join("store"));
+    assert_eq!(store.load("r").await.unwrap(), None);
+    assert!(!dir.path().join("missing").exists());
+}
+
+#[test]
+fn a_relative_single_component_root_opens_against_the_working_directory() {
+    let name = format!("tinyskills-store-{}", std::process::id());
+    assert!(open_store_dir(Path::new(&name), false).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_failed_rename_leaves_no_temp_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("r.json");
+    std::fs::create_dir(&blocker).unwrap();
+    std::fs::write(blocker.join("keep"), b"keep").unwrap();
+    let store = FileCatalogStore::new(dir.path());
+    assert!(matches!(
+        store.save("r", &catalog()).await,
+        Err(StoreError::Io(_))
+    ));
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names, ["r.json"]);
+    assert_eq!(std::fs::read(blocker.join("keep")).unwrap(), b"keep");
+}
+
+#[tokio::test]
+async fn a_store_dir_that_is_a_file_is_an_io_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plain");
+    std::fs::write(&file, b"x").unwrap();
+    let store = FileCatalogStore::new(&file);
+    assert!(matches!(store.load("r").await, Err(StoreError::Io(_))));
+    assert!(matches!(
+        store.save("r", &catalog()).await,
+        Err(StoreError::Io(_))
+    ));
 }
