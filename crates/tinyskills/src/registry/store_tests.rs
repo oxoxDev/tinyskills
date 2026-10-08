@@ -29,15 +29,15 @@ async fn memory_store_round_trips() {
 async fn file_store_writes_atomically_and_round_trips() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileCatalogStore::new(dir.path().join("nested"));
-    assert_eq!(store.load("hermes").await.unwrap(), None);
-    store.save("hermes", &catalog()).await.unwrap();
-    store.save("hermes", &catalog()).await.unwrap();
-    assert_eq!(store.load("hermes").await.unwrap(), Some(catalog()));
+    assert_eq!(store.load("example").await.unwrap(), None);
+    store.save("example", &catalog()).await.unwrap();
+    store.save("example", &catalog()).await.unwrap();
+    assert_eq!(store.load("example").await.unwrap(), Some(catalog()));
     let names: Vec<_> = std::fs::read_dir(dir.path().join("nested"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
-    assert_eq!(names, ["hermes.json"]);
+    assert_eq!(names, ["example.json"]);
 }
 
 #[tokio::test]
