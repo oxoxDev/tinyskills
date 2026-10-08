@@ -1090,6 +1090,19 @@ async fn document_bodies_are_capped() {
     assert!(matches!(error, RegistryError::Unavailable { status: 503 }));
 }
 
+#[tokio::test]
+async fn empty_chunks_do_not_end_a_document_body() {
+    let rig = Rig::new();
+    let url = "https://docs.test/SKILL.md";
+    rig.transport.get(
+        url,
+        Reply::ok(Vec::new()).chunked(vec![vec![], SKILL_MD.as_bytes().to_vec(), vec![]]),
+    );
+    let document = ad_hoc(&rig, url).await.unwrap();
+    assert_eq!(document.document.frontmatter.name, "apple-notes");
+    assert_eq!(document.digest, document_digest(SKILL_MD));
+}
+
 #[tokio::test(start_paused = true)]
 async fn operations_time_out_with_typed_errors() {
     let rig = Rig::new();

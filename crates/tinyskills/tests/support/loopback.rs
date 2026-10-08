@@ -118,10 +118,7 @@ fn serve(stream: TcpStream, routes: &HashMap<String, Script>, log: &Mutex<Vec<St
             let mut result = out.write_all(
                 b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
             );
-            for part in parts
-                .into_iter()
-                .filter(|part| !head_only && !part.is_empty())
-            {
+            for part in parts.into_iter().filter(|_| !head_only) {
                 result = result
                     .and_then(|()| out.write_all(format!("{:x}\r\n", part.len()).as_bytes()))
                     .and_then(|()| out.write_all(&part))

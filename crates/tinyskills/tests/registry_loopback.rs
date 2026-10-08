@@ -135,24 +135,6 @@ async fn documents_over_the_cap_are_aborted() {
 }
 
 #[tokio::test]
-async fn empty_chunks_do_not_end_the_body() {
-    let server = Server::start(vec![(
-        "/chunked.md",
-        Script::Chunked(vec![Vec::new(), SKILL_MD.as_bytes().to_vec(), Vec::new()]),
-    )]);
-    let transport = Arc::new(SocketTransport::default());
-    let document = fetch(
-        &transport,
-        &server.url("/chunked.md"),
-        &RegistryTimeouts::default(),
-        &RegistryLimits::default(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(document.flat.name, "loopback");
-}
-
-#[tokio::test]
 async fn an_oversized_response_head_is_refused() {
     let server = Server::start(vec![(
         "/big.md",
