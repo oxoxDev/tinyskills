@@ -73,20 +73,33 @@ installs with `document_digest` should digest `render_flat` output.
 `SkillRegistry` answers catalog queries for a host UI or agent tool. It is off
 by default; enable it with `features = ["registry"]`.
 
-```rust,ignore
+```rust
+use std::path::PathBuf;
 use std::sync::Arc;
-use tinyskills::{EntryKey, FileCatalogStore, HermesIndexSource, SkillQuery, SkillRegistry, StaticSource};
 
-let registry: Arc<SkillRegistry> = SkillRegistry::builder(MyTransport::new())
-    .source(HermesIndexSource::hermes())
-    .baseline(StaticSource::new("library", "Packaged library", packaged_entries))
-    .store(FileCatalogStore::new(cache_dir))
-    .featured(["apple-notes"])
-    .build();
+use tinyskills::{
+    EntryKey, FileCatalogStore, HermesIndexSource, RegistryEntry, RegistryError,
+    RegistryTransport, SkillQuery, SkillRegistry, StaticSource,
+};
 
-let page = registry.search(&SkillQuery::text("notes")).await?;
-let document = registry.fetch_document(&EntryKey::new("apple-notes")).await?;
-if document.is_blocked() { /* host policy decides */ }
+async fn browse(
+    transport: impl RegistryTransport + 'static,
+    packaged_entries: Vec<RegistryEntry>,
+    cache_dir: PathBuf,
+) -> Result<(), RegistryError> {
+    let registry: Arc<SkillRegistry> = SkillRegistry::builder(transport)
+        .source(HermesIndexSource::hermes())
+        .baseline(StaticSource::new("library", "Packaged library", packaged_entries))
+        .store(FileCatalogStore::new(cache_dir))
+        .featured(["apple-notes"])
+        .build();
+
+    let page = registry.search(&SkillQuery::text("notes")).await?;
+    println!("{} matching skills", page.total);
+    let document = registry.fetch_document(&EntryKey::new("apple-notes")).await?;
+    if document.is_blocked() { /* host policy decides */ }
+    Ok(())
+}
 ```
 
 - **Reads** are stale-while-revalidate. A catalog within its time-to-live
@@ -133,6 +146,8 @@ most five). The transport must:
 A sketch of a `reqwest` adapter (host code, not part of this crate):
 
 ```rust,ignore
+struct ReqwestTransport;
+
 impl RegistryTransport for ReqwestTransport {
     fn send(&self, request: TransportRequest) -> BoxFuture<'_, Result<TransportResponse, TransportError>> {
         Box::pin(async move {
